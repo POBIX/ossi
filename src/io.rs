@@ -22,17 +22,19 @@ pub trait Read {
 
 pub trait Seek {
     fn seek(&mut self, pos: usize);
-    fn get_position(&self) -> usize;
+    fn get_cursor_position(&self) -> usize;
 }
 
 pub trait Clear {
     fn clear(&mut self);
 }
 
-pub unsafe fn outb(port: u16, value: u8) {
-    asm!(
-        "out dx, al",
-        in("dx") port,
-        in("al") value
-    );
+#[inline] pub unsafe fn outb(port: u16, value: u8) {
+    asm!("out dx, al", in("dx") port, in("al") value);
+}
+#[inline] pub unsafe fn outw(port: u16, value: u16) {
+    asm!("out dx, ax", in("dx") port, in("ax") value);
+}
+#[inline] pub unsafe fn outd(port: u16, value: u32) {
+    asm!( "out dx, eax", in("dx") port, in("eax") value);
 }

@@ -1,7 +1,6 @@
 use crate::io;
-use crate::io::*;
+use crate::io::{Write, Seek, Clear};
 
-#[allow(dead_code)] // allow unused colors
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Color {
@@ -60,20 +59,25 @@ impl Write for Console {
     fn write_byte(&mut self, byte: u8) {
         self.buffer.write(self.ptr, byte, self.color);
         self.ptr += 1;
+        self.update_cursor();
     }
     fn write_bytes(&mut self, bytes: &[u8]) {
-        for b in bytes.iter() {
-            self.write_byte(*b);
+        for byte in bytes.iter() {
+            self.buffer.write(self.ptr, *byte, self.color);
+            self.ptr += 1;
         }
+        self.update_cursor();
     }
 }
 
 impl Seek for Console {
-    #[inline]
-    fn seek(&mut self, pos: usize) { self.ptr = pos; }
+    fn seek(&mut self, pos: usize) {
+        self.ptr = pos;
+        self.update_cursor()
+    }
 
     #[inline]
-    fn get_position(&self) -> usize { self.ptr }
+    fn get_cursor_position(&self) -> usize { self.ptr }
 }
 
 impl Clear for Console {
@@ -93,19 +97,24 @@ impl Console {
     pub fn get_color(&self) -> ColorCode { self.color }
 
     pub fn update_cursor(&self) {
-        // move VGA cursor
         unsafe {
-            outb(0x3D4, 0x0F);
-            outb(0x3D5, (self.ptr & 0xFF) as u8);
-            outb(0x3D4, 0x0E);
-            outb(0x3D5, ((self.ptr >> 8) & 0xFF) as u8);
+            // 0x3D4/5 - the I/O ports for the VGA cursor
+            // we send each byte of the cursor position in turn.
+            io::outb(0x3D4, 0x0E);
+            io::outb(0x3D5, ((self.ptr >> 8) & 0xFF) as u8);
+            io::outb(0x3D4, 0x0F);
+            io::outb(0x3D5, (self.ptr & 0xFF) as u8);
         }
     }
+
+    /// Set the cursor's position without updating the visual one.
+    #[inline]
+    pub fn seek_no_visual(&mut self, value: usize) { self.ptr = value; }
 
     pub fn new() -> Console {
         Console {
             ptr: 0,
-            color: ColorCode::new(Color::White, Color::LightBlue),
+            color: ColorCode::new(Color::White, Color::Black),
             buffer: unsafe { &mut *(0xB8000 as *mut Buffer) } // address of VGA text buffer
         }
     }

@@ -1,12 +1,12 @@
 #![no_std]
 #![no_main]
 
-mod vga_console;
-mod io;
+pub mod vga_console;
+pub mod io;
 
 use core::panic::PanicInfo;
 use crate::io::{Clear, Write};
-use crate::vga_console::{Color, ColorCode, Console};
+use crate::vga_console::{Console};
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
