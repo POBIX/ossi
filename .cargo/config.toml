@@ -5,8 +5,10 @@ build-std = ["core", "compiler_builtins"]
 
 # specify no os
 [build]
-target = "target.json"
+target = "/mnt/d/Programming/Projects/ossi/target.json"
+target-dir = "."
+rustflags = ["-C", "link-args=-Ttext=0x1000"]
 
 # automatically run in qemu
-[target.'cfg(target_os = "none")']
-runner = "bootimage runner"
+#[target.'cfg(target_os = "none")']
+#runner = "bootimage runner"

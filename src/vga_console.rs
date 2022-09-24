@@ -82,9 +82,9 @@ impl Seek for Console {
 
 impl Clear for Console {
     fn clear(&mut self) {
-        self.seek(0);
-        for _ in 0..VGA_BUFFER_SIZE {
-            self.write_byte(b' ');
+        self.seek_raw(0);
+        for i in 0..VGA_BUFFER_SIZE {
+            self.buffer.write(i, b' ', self.color);
         }
         self.seek(0);
     }
@@ -107,9 +107,9 @@ impl Console {
         }
     }
 
-    /// Set the cursor's position without updating the visual one.
+    /// Set the cursor's logical position without updating its visual position.
     #[inline]
-    pub fn seek_no_visual(&mut self, value: usize) { self.ptr = value; }
+    pub fn seek_raw(&mut self, value: usize) { self.ptr = value; }
 
     pub fn new() -> Console {
         Console {
