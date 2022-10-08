@@ -62,7 +62,7 @@ impl Write for Console {
         self.update_cursor();
     }
     fn write_bytes(&mut self, bytes: &[u8]) {
-        for byte in bytes.iter() {
+        for byte in bytes {
             self.buffer.write(self.ptr, *byte, self.color);
             self.ptr += 1;
         }

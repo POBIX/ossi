@@ -11,23 +11,20 @@ load:
   mov bp, 0x9000 ; initialize the stack
   mov sp, bp
 
-  .disk_load:
-    mov ah, 2 ; BIOS read sector
-    mov al, 1 ; number of sectors to read
-    mov cl, 2 ; start reading from second sector (boot sector + 1)
-    mov bx, KERNEL_OFFSET ; read at address KERNEL_OFFSET
-    xor ch, ch ; cylinder 0
-    xor dh, dh ; head 0
-    int 0x13
-    jc .error
+  ; load_kernel parameters:
+  xor dh, dh
+  ; dl has already been set to the boot disk by the BIOS
+  mov cl, 2 ; boot sector + 1
+  mov ax, KERNEL_SECTORS
+  mov bx, KERNEL_ADDR
+  call load_kernel
 
-    cmp al, 1 ; if all sectors were read
-    je enter_protected
+  jnc enter_protected
 
-    .error:
-      mov ebx, 0xB8000
-      mov byte [ebx], ah ; print error code (look it up on an ASCII table lol)
-      jmp $
+  .error:
+    mov ebx, 0xB8000
+    mov byte [ebx], ah
+    jmp $
 
 gdt:
   CODE_SEG equ .code - gdt
@@ -87,15 +84,13 @@ protected_mode:
 
     jmp _start ; rust function
 
+%include "src/load_kernel.asm"
+
+; calculated in linker.ld
+extern KERNEL_SECTORS
+extern KERNEL_ADDR
+
+extern _start
 
 times 510-($-$$) db 0 ; pad the binary to 510 bytes (+ the magic number)
 dw 0xAA55 ; magic number that informs the BIOS that this is a boot sector
-
-section .text
-epic_lol:
-  mov ecx, 0xB8002
-  mov byte [ecx], 't'
-  jmp $
-
-KERNEL_OFFSET equ 0x8000
-extern _start

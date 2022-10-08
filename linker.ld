@@ -1,5 +1,4 @@
 ENTRY(load)
-OUTPUT_FORMAT(binary)
 
 SECTIONS {
     . = 0x7C00;
@@ -7,7 +6,8 @@ SECTIONS {
         *(.boot)
     }
 
-    . = 0x8000;
+    KERNEL_ADDR = 0x8000;
+    . = KERNEL_ADDR;
     .kernel : AT(0x7E00) {
         *(.text.*)
         *(.rodata.*)
@@ -18,4 +18,6 @@ SECTIONS {
         _bss_end = .;
         *(.debug_gdb_scripts)
     }
+
+    KERNEL_SECTORS = (SIZEOF(.kernel) + 511) / 512;
 }
