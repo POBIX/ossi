@@ -1,30 +1,5 @@
-global load
-
 section .boot
-
-load:
-  bits 16
-  xor ax, ax
-  mov ds, ax
-  mov ss, ax
-
-  mov bp, 0x9000 ; initialize the stack
-  mov sp, bp
-
-  ; load_kernel parameters:
-  xor dh, dh
-  ; dl has already been set to the boot disk by the BIOS
-  mov cl, 2 ; boot sector + 1
-  mov ax, KERNEL_SECTORS
-  mov bx, KERNEL_ADDR
-  call load_kernel
-
-  jnc enter_protected
-
-  .error:
-    mov ebx, 0xB8000
-    mov byte [ebx], ah
-    jmp $
+bits 16
 
 gdt:
   CODE_SEG equ .code - gdt
@@ -59,9 +34,9 @@ gdt:
     dd gdt ; addr
 
 protected_mode:
+  ; parameter: bx=place to jump to after entering PM
   enter_protected:
-    bits 16
-    cli ; disable interrupts during the switch
+    cli ; real mode interrupt handlers are invalid in PM
     lgdt [gdt_descriptor]
 
     mov eax, cr0 ; toggling the first bit of cr0 enters PM
@@ -79,18 +54,7 @@ protected_mode:
     mov fs, ax
     mov gs, ax
 
-    mov ebp, 0x90000 ; initialize the stack at the top of our new free space
+    mov ebp, 0x7C00 ; reinitialize the stack at the top of free space
     mov esp, ebp
 
-    jmp _start ; rust function
-
-%include "src/load_kernel.asm"
-
-; calculated in linker.ld
-extern KERNEL_SECTORS
-extern KERNEL_ADDR
-
-extern _start
-
-times 510-($-$$) db 0 ; pad the binary to 510 bytes (+ the magic number)
-dw 0xAA55 ; magic number that informs the BIOS that this is a boot sector
+    jmp bx

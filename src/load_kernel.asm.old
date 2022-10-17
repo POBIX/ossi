@@ -1,0 +1,258 @@
+;; based on https://stackoverflow.com/a/34521208/13228993
+;
+;bits 16
+;section .boot
+;
+;MAX_ATTEMPTS equ 5 ; maximum number of read attempts per sector before error
+;
+;; parameters:
+;;   dl - drive number
+;;   dh - head
+;;   cl - sector
+;;   ax - sector count
+;;   es:bx - buffer
+;; output:
+;;   cf=0 -> ch,dh,cl = chs of next sector
+;;   cf=1 -> ah = error code, ch,dh,cl = chs of error sector
+;load_kernel:
+;  push es
+;  push di
+;
+;  push bp
+;  mov bp, sp
+;
+;  ; local variables
+;  push ax
+;  %define sector_count [bp - 2]
+;  push cx
+;  %define max_sector [bp - 4]
+;  push dx
+;  %define max_head [bp - 6]
+;  push bx
+;  %define max_cylinder [bp - 8]
+;
+;  ; BIOS command: get CHS limits
+;  push es
+;  mov ah, 0x8
+;  int 0x13
+;  pop es
+;  jc .return
+;
+;  ; store the cylinder info
+;  mov bx, cx
+;  xchg bl, bh
+;  shr bh, 6
+;  xchg max_cylinder, bx
+;
+;  movzx dx, dh ; dh->dl + 0->dhs
+;  xchg max_head, dx
+;
+;  and cx, 0x3F ; sector info is 6-bits (two high bits belong to cylinder)
+;  xchg max_sector, cx
+;
+;  .read_next:
+;    mov di, MAX_ATTEMPTS
+;  .do_read:
+;    ; BIOS command: read sector (al=2)
+;    mov ax, 0x0201 ; read 1 sector
+;    int 0x13
+;    jnc .success
+;    push ax ; save error code (in ah)
+;
+;    ; BIOS command: reset disk system
+;    xor ah, ah
+;    int 0x13
+;    pop ax
+;
+;    dec di ; di = attempts left
+;    jnz .do_read
+;
+;    ; failed to read sector
+;    stc
+;    jmp .return
+;
+;  .success:
+;    dec word sector_count
+;    jz .done
+;    call inc_chs
+;    ; move buffer 512 bytes up
+;    mov ax, es
+;    add ax, 512/16
+;    mov es, ax
+;    jmp .read_next
+;
+;  .done:
+;    call inc_chs
+;    xor ah, ah
+;
+;  .return:
+;    mov sp, bp
+;    pop bp
+;    pop di
+;    pop es
+;    ret
+;
+;inc_chs:
+;  ; calculate the 6-bit sector number
+;  mov al, cl
+;  and al, 0x3F
+;  cmp al, max_sector
+;  jb .inc_sector
+;
+;  cmp dh, max_head
+;  jb .inc_head
+;
+;  ; calculate the 10-bit cylinder number
+;  mov ax, cx
+;  xchg al, ah
+;  shr ah, 6
+;  cmp ax, max_cylinder
+;  jb .inc_cylinder
+;
+;  .wrap: ; that was the last sector.. come back to the first one
+;    mov cx, 1
+;    xor dh, dh
+;    ret
+;
+;  .inc_cylinder:
+;    inc ax,
+;    ; split 10-bit cylinder number over cl and ch
+;    shl ah, 6
+;    xchg al, ah
+;    mov cx, ax
+;    mov dh, 0
+;    inc cl
+;    ret
+;  .inc_head:
+;    inc dh
+;    and cl, 0xC0
+;  .inc_sector:
+;    inc cl
+;    ret
+
+;
+; INPUT:  DL=Drive
+;         CH=Cylinder
+;         DH=Head
+;         CL=Sector
+;         AX=SectorCount
+;         ES:BX=Buffer
+; OUTPUT: CF=0 AH       = 0
+;              CH,DH,CL = CHS of following sector
+;         CF=1 AH       = Error status
+;              CH,DH,CL = CHS of problem sector
+
+bits 16
+section .boot
+
+load_kernel:
+  push    es
+  push    di
+  push    bp
+  mov     bp,sp           ;Local variables:
+  push    ax              ;[bp-2]=SectorCount
+  push    cx              ;[bp-4]=MaxSector
+  push    dx              ;[bp-6]=MaxHead
+  push    bx              ;[bp-8]=MaxCylinder
+
+  push    es
+  mov     ah,08h
+  int     13h             ;ReturnDiskDriveParameters
+  pop     es
+  jc      NOK
+  mov     bx,cx           ;10-bit cylinder info -> BX
+  xchg    bl,bh
+  shr     bh,6
+  xchg    [bp-8],bx       ;Store MaxCylinder and get input BX back
+  movzx   dx,dh           ;8-bit head info -> DX
+  xchg    [bp-6],dx       ;Store MaxHead and get input DX back
+  and     cx,003Fh        ;6-bit sector info -> CX
+  xchg    [bp-4],cx       ;Store MaxSector and get input CX back
+
+
+  mov si, [bp-8]
+  inc si ; https://retrocomputing.stackexchange.com/questions/21690/why-is-qemu-cutting-off-the-last-cylinder-of-the-disk-image
+  mov [MaxCylinder], si
+  mov si, [bp-6]
+  mov [MaxHead], si
+  mov si, [bp-4]
+  mov [MaxSector], si
+  mov si, [bp-2]
+  mov [SectorCount], si
+
+ReadNext:
+  mov     di,5            ;Max 5 tries per sector
+  mov esi, 0xB8000
+  add esi, [lol]
+  mov byte [esi], '.'
+  add dword [lol], 2
+  cmp dword [lol], 4000
+  jl ReadAgain
+  mov dword [lol], 0
+ReadAgain:
+  mov     ax,0201h        ;Read 1 sector
+  int     13h             ;ReadDiskSectors
+  jnc     OK
+  push    ax              ;Save error status byte in AH
+  mov     ah,00h
+  int     13h             ;ResetDiskSystem
+  pop     ax
+  dec     di
+  jnz     ReadAgain
+  stc
+  jmp     NOK
+OK:
+  dec     word [SectorCount] ;SectorCount
+  jz      Ready
+  call    NextCHS
+  mov     ax,es           ;Move buffer 512 bytes up
+  add     ax,512/16
+  mov     es,ax
+  jmp     ReadNext
+
+Ready:
+  call    NextCHS         ;Return useful CHS values to support reads
+  xor     ah,ah           ; -> CF=0 ... that are longer than memory
+NOK:
+  mov     sp,bp
+  pop     bp
+  pop     di
+  pop     es
+  ret
+
+NextCHS:
+  mov     al,cl            ;Calculate the 6-bit sector number
+  and     al,00111111b
+  cmp     al,[MaxSector]        ;MaxSector
+  jb      NextSector
+  cmp     dh,[MaxHead]        ;MaxHead
+  jb      NextHead
+  mov     ax,cx            ;Calculate the 10-bit cylinder number
+  xchg    al,ah
+  shr     ah,6
+  cmp     ax,[MaxCylinder]        ;MaxCylinder
+  jb      NextCylinder
+DiskWrap:
+  mov     cx,1             ;Wraparound to very first sector on disk
+  mov     dh,0
+  ret
+NextCylinder:
+  inc     ax
+  shl     ah,6             ;Split 10-bit cylinder number over CL and CH
+  xchg    al,ah
+  mov     cx,ax
+  mov     dh,0
+  inc     cl
+  ret
+NextHead:
+  inc     dh
+  and     cl,11000000b
+NextSector:
+  inc     cl
+  ret
+
+lol: dd 0
+SectorCount: dw 0
+MaxSector: dw 0
+MaxHead: dw 0
+MaxCylinder: dw 0

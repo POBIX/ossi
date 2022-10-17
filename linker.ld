@@ -1,23 +1,23 @@
-ENTRY(load)
-
+ENTRY(_start)
 SECTIONS {
-    . = 0x7C00;
-    .boot : {
-        *(.boot)
+    /* load sections at 1MB, where there's loads of available memory) */
+    . = 1M;
+
+    .text BLOCK(4K) : ALIGN(4K) {
+        *(.multiboot) /* the multiboot section has to go first because it has to be in the first 8KB of the kernel */
+        *(.text) /* the entirety of the code */
     }
 
-    KERNEL_ADDR = 0x8000;
-    . = KERNEL_ADDR;
-    .kernel : AT(0x7E00) {
-        *(.text.*)
-        *(.rodata.*)
-        *(.data.*)
-        _bss_start = .;
-        *(.bss.*)
+    .rodata BLOCK(4K) : ALIGN(4K) {
+        *(.rodata)
+    }
+
+    .data BLOCK(4K) : ALIGN(4K) {
+        *(.data)
+    }
+
+    .bss BLOCK(4K) : ALIGN(4K) {
         *(COMMON)
-        _bss_end = .;
-        *(.debug_gdb_scripts)
+        *(.bss)
     }
-
-    KERNEL_SECTORS = (SIZEOF(.kernel) + 511) / 512;
 }
