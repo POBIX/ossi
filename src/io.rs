@@ -7,6 +7,14 @@ pub trait Write {
             self.write_byte(*byte);
         }
     }
+    fn write_string(&mut self, str: &str) {
+        for byte in str.bytes() {
+            match byte {
+                0x20..=0x7E => self.write_byte(byte), // writable ASCII. space to ~
+                _ => self.write_byte(b'?')
+            }
+        }
+    }
 }
 
 pub trait Read {
