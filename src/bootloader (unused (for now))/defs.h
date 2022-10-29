@@ -26,6 +26,9 @@ __extension__
 typedef unsigned long long int        uint64_t;
 #endif
 
+#ifndef __others_defined
+#define __others_defined
 typedef unsigned char bool;
 #define true 1
 #define false 0
+#endif

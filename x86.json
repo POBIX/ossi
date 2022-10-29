@@ -12,5 +12,6 @@
   "panic-strategy": "abort",
   "disable-redzone": true,
   "features": "-mmx,-sse,+soft-float",
-  "relocation-model": "static"
+  "relocation-model": "static",
+  "linker-is-gnu": true
 }

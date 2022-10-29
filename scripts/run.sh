@@ -1,8 +1,9 @@
 #!/usr/bin/env sh
-com="qemu-system-x86_64"
+com="qemu-system-i386"
 args="-cdrom ossi.iso"
 if [ "$1" = "debug" ]; then
-  "$com" -S -s $args
+  screen -d -m "$com" -S -s $args
+  sleep 1
 else
   "$com" $args
 fi
