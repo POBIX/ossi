@@ -23,6 +23,38 @@ align 4
   dd FLAGS
   dd CHECKSUM
 
+gdt:
+  CODE_SEG equ .code - gdt
+  DATA_SEG equ .data - gdt
+  .null: ; mandatory null descriptor
+    dd 0x0
+    dd 0x0
+  .code: ; code segment descriptor
+    ; base=0x0, limit=0xFFFFF,
+    ; 1st flags: (present)1 (privilege)00 (descriptor type)1 -> 1001b
+    ; type flags: (code)1 (conforming)0 (readable)1 (accessed)0 -> 1010 b
+    ; 2nd flags: (granularity)1 (32-bit default)1 (64-bit seg)0 (AVL)0 -> 1100 b
+    dw 0xFFFF ; Limit (bits 0-15)
+    dw 0x0 ; Base (bits 0-15)
+    db 0x0 ; Base (bits 16-23)
+    db 10011010b ; 1st flags, type flags
+    db 11001111b ; 2nd flags, Limit (bits 16-19)
+    db 0x0 ; Base (bits 24-31)
+  .data: ; data segment descriptor
+    ; Same as code segment except for the type flags:
+    ; type flags: (code)0 (expand down)0 (writable)1 (accessed)0 -> 0010 b
+    dw 0xFFFF ; Limit (bits 0-15)
+    dw 0x0 ; Base (bits 0-15)
+    db 0x0 ; Base (bits 16-23)
+    db 10010010b ; 1st flags, type flags
+    db 11001111b ; 2nd flags, Limit (bits 16-19)
+    db 0x0 ; Base (bits 24-31)
+  gdt_end: ; used to calculate size of GDT descriptor
+
+  gdt_descriptor:
+    dw gdt_end - gdt - 1 ; size
+    dd gdt ; addr
+
 ; allocate space for a stack
 section .bss
 align 16
@@ -30,11 +62,26 @@ stack_bottom:
   resb 16384
 stack_top:
 
+
 ; protected mode entry point to the kernel (as defined in linker.ld)
 section .text
-global _start:function (_start.end - _start)
+global _start:function (new_cs.end - _start)
 _start:
+  cli
+
+  lgdt [gdt_descriptor]
+  jmp CODE_SEG:new_cs
+
+new_cs:
+  mov ax, DATA_SEG
+  mov ds, ax
+  mov es, ax
+  mov fs, ax
+  mov gs, ax
+  mov ss, ax
+
   mov esp, stack_top ; initialize stack
+
   extern main ; main is defined in rust
   call main
 
