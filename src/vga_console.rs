@@ -1,7 +1,6 @@
 use core::fmt;
 use core::fmt::Write;
-use lazy_static::lazy_static;
-use spin::mutex::Mutex;
+use spin::{Lazy, Mutex};
 use volatile::Volatile;
 use crate::io;
 use crate::io::{Seek, Clear};
@@ -153,13 +152,11 @@ impl Console {
     }
 }
 
-lazy_static! {
-    pub static ref CONSOLE: Mutex<Console> = Mutex::new(Console {
-        ptr: 0,
-        color: ColorCode::new(Color::White, Color::Black),
-        buffer: unsafe { &mut *(0xB8000 as *mut Buffer) } // address of VGA text buffer
-    });
-}
+pub static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| Mutex::new(Console {
+    ptr: 0,
+    color: ColorCode::new(Color::White, Color::Black),
+    buffer: unsafe { &mut *(0xB8000 as *mut Buffer) } // address of VGA text buffer
+}));
 
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
