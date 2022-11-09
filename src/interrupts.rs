@@ -33,8 +33,8 @@ pub fn init() {
         setup_idt();
         // actually load the IDTR and enable interrupts
         asm!("lidt [{}]",
-        "sti",
-        in(reg) IDTR.deref()
+            "sti",
+            in(reg) IDTR.deref()
         )
     }
 }

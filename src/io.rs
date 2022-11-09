@@ -43,6 +43,25 @@ pub trait Clear {
 #[inline] pub unsafe fn outw(port: u16, value: u16) {
     asm!("out dx, ax", in("dx") port, in("ax") value);
 }
-#[inline] pub unsafe fn outd(port: u16, value: u32) {
-    asm!( "out dx, eax", in("dx") port, in("eax") value);
+#[inline] pub unsafe fn outl(port: u16, value: u32) {
+    asm!("out dx, eax", in("dx") port, in("eax") value);
 }
+
+#[inline] pub unsafe fn inb(port: u16) -> u8 {
+    let ret: u8;
+    asm!("in al, dx", in("dx") port, out("al") ret);
+    ret
+}
+#[inline] pub unsafe fn inw(port: u16) -> u16 {
+    let ret: u16;
+    asm!("in ax, dx", in("dx") port, out("ax") ret);
+    ret
+}
+#[inline] pub unsafe fn inl(port: u16) -> u32 {
+    let ret: u32;
+    asm!("in eax, dx", in("dx") port, out("eax") ret);
+    ret
+}
+
+/// wait a very small amount of time by writing to an unused I/O port.
+#[inline] pub fn wait() { unsafe { outb(0x80, 0); } }

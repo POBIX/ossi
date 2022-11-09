@@ -11,10 +11,12 @@ use core::panic::PanicInfo;
 pub mod interrupts;
 pub mod io;
 pub mod vga_console;
+pub mod pic;
 
 #[no_mangle]
 pub extern "C" fn main() -> ! {
     CONSOLE.lock().clear();
+    pic::remap();
     interrupts::init();
     unsafe {
         asm!("int3");
