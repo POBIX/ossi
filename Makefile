@@ -30,7 +30,7 @@ clean:
 	@rm -rf $(OBJ_DIR)
 
 
-$(LIB_FILE):
+$(LIB_FILE): $(wildcard src/**/*.rs)
 	@cargo build
 $(BOOT_OBJ): $(LIB_FILE)
 	@nasm $(BOOT_FILE) $(NASM_ARGS) -o $(BOOT_OBJ)
