@@ -1,10 +1,10 @@
 use crate::io;
 
 // I/O addresses for PIC
-const MASTER_CMD: u16 = 0x20;
-const MASTER_DATA: u16 = 0x21;
-const SLAVE_CMD: u16 = 0xA0;
-const SLAVE_DATA: u16 = 0xA1;
+pub const MASTER_CMD: u16 = 0x20;
+pub const MASTER_DATA: u16 = 0x21;
+pub const SLAVE_CMD: u16 = 0xA0;
+pub const SLAVE_DATA: u16 = 0xA1;
 
 // Initialization Command Words are given to the PIC in 4 stages.
 #[repr(u8)]
