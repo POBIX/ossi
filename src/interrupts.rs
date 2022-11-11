@@ -1,4 +1,3 @@
-use crate::println;
 use core::arch::asm;
 use core::ops::Deref;
 use spin::Lazy;
@@ -92,12 +91,28 @@ impl IDTR {
 
 pub static mut IDT: [Handler; 256] = [Handler::null(); 256];
 static IDTR: Lazy<IDTR> = unsafe { Lazy::new(|| IDTR::new()) };
+static mut ENABLED: bool = false;
+
+pub fn enable() {
+    unsafe {
+        asm!("sti");
+        ENABLED = true;
+    }
+}
+
+pub fn disable() {
+    unsafe {
+        asm!("cli");
+        ENABLED = false;
+    }
+}
+
+pub fn is_enabled() -> bool { unsafe { ENABLED } }
 
 macro_rules! int_fn {
     ($name:tt) => {
         extern "x86-interrupt" fn $name() {
-            println!(concat!("EXCEPTION: ", stringify!($name)));
-            loop {}
+            panic!(concat!("EXCEPTION: ", stringify!($name)));
         }
     };
 }
@@ -105,11 +120,10 @@ macro_rules! int_fn {
 macro_rules! int_fn_err {
     ($name:tt) => {
         extern "x86-interrupt" fn $name(err: u32) {
-            println!(
+            panic!(
                 concat!("EXCEPTION: ", stringify!($name), ", ERROR CODE: {:#X}"),
                 err
             );
-            loop {}
         }
     };
 }

@@ -1,10 +1,10 @@
 use crate::io;
 
 // I/O addresses for PIC
-const MASTER_CMD: u16 = 0x20;
-const MASTER_DATA: u16 = 0x21;
-const SLAVE_CMD: u16 = 0xA0;
-const SLAVE_DATA: u16 = 0xA1;
+pub const MASTER_CMD: u16 = 0x20;
+pub const MASTER_DATA: u16 = 0x21;
+pub const SLAVE_CMD: u16 = 0xA0;
+pub const SLAVE_DATA: u16 = 0xA1;
 
 // Initialization Command Words are given to the PIC in 4 stages.
 #[repr(u8)]
@@ -14,7 +14,7 @@ enum ICW1 {
     Single = 0x02, // single/cascade mode
     Interval4 = 0x04, // call address interval 4/8
     Level = 0x08, // level/edge triggering mode
-    Init, // required.
+    Init = 0x10, // required.
 }
 
 #[repr(u8)]
@@ -88,5 +88,16 @@ pub fn set_mask(irq_line: u8, value: bool) {
         let current_masks: u8 = io::inb(port);
         let modify: u8 = 1 << actual_line;
         io::outb(port, if value { current_masks | modify } else { current_masks & !modify });
+    }
+}
+
+/// send an end-of-interrupt along the given IRQ.
+pub fn send_eoi(irq_line: u8) {
+    // 0x20 is the end-of-interrupt command code.
+    unsafe {
+        if irq_line >= 8 {
+            io::outb(SLAVE_CMD, 0x20);
+        }
+        io::outb(MASTER_CMD, 0x20);
     }
 }

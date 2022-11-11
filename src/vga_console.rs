@@ -4,6 +4,7 @@ use spin::{Lazy, Mutex};
 use volatile::Volatile;
 use crate::io;
 use crate::io::{Seek, Clear};
+use core::arch::asm;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -160,7 +161,21 @@ pub static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| Mutex::new(Console {
 
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
+    let ints_enabled = crate::interrupts::is_enabled();
+    if ints_enabled {
+        // interrupts might mean another print, which would cause a deadlock.
+        crate::interrupts::disable();
+    }
+    unsafe {
+        *(0xB8000 as *mut u8) = b'a';
+    }
     CONSOLE.lock().write_fmt(args).unwrap();
+    unsafe {
+        *(0xB8000 as *mut u8) = b'b';
+    }
+    if ints_enabled {
+        crate::interrupts::enable();
+    }
 }
 
 #[macro_export]
