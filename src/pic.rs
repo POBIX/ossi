@@ -6,6 +6,8 @@ pub const MASTER_DATA: u16 = 0x21;
 pub const SLAVE_CMD: u16 = 0xA0;
 pub const SLAVE_DATA: u16 = 0xA1;
 
+pub const IRQ_OFFSET: usize = 0x20;
+
 // Initialization Command Words are given to the PIC in 4 stages.
 #[repr(u8)]
 #[allow(dead_code)]
@@ -54,8 +56,8 @@ pub fn remap() {
         send_ms_cmd(ICW1::Init as u8 | ICW1::ICW4 as u8);
 
         // ICW2 (remap the PICs to the end of the exceptions' IRQs)
-        send(MASTER_DATA, 0x20);
-        send(SLAVE_DATA, 0x28);
+        send(MASTER_DATA, IRQ_OFFSET as u8);
+        send(SLAVE_DATA, IRQ_OFFSET as u8 + 8);
 
         // ICW3
         send(MASTER_DATA, 4); // tells the master that there is a slave PIC at IRQ2 (not 4)
