@@ -3,16 +3,16 @@
 #![no_std]
 #![no_main]
 
+use crate::interrupts::GateType;
 use crate::io::Clear;
 use crate::vga_console::CONSOLE;
-use core::panic::PanicInfo;
-use crate::interrupts::GateType;
 use core::arch::asm;
+use core::panic::PanicInfo;
 
 pub mod interrupts;
 pub mod io;
-pub mod vga_console;
 pub mod pic;
+pub mod vga_console;
 
 #[no_mangle]
 pub extern "C" fn main() -> ! {
@@ -24,12 +24,6 @@ pub extern "C" fn main() -> ! {
     }
     interrupts::init();
 
-    // never print anything above this comment.
-
-    for _ in 0..1000 {
-        print!("-");
-    }
-
     loop {
         unsafe {
             asm!("hlt");
@@ -37,8 +31,17 @@ pub extern "C" fn main() -> ! {
     }
 }
 
+static mut LOL: u8 = b'a';
+
 extern "x86-interrupt" fn irq0() {
-    print!(".");
+    unsafe {
+        print!("{}", LOL as char);
+        LOL += 1;
+        if LOL >= b'z' {
+            LOL = b'a';
+        }
+    }
+
     pic::send_eoi(0);
     return;
 }

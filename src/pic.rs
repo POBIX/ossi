@@ -91,6 +91,10 @@ pub fn set_mask(irq_line: u8, value: bool) {
     }
 }
 
+pub fn mask_all(value: bool) {
+    unsafe { send_ms_data(if value { 0xFF } else { 0x00 }); }
+}
+
 /// send an end-of-interrupt along the given IRQ.
 pub fn send_eoi(irq_line: u8) {
     // 0x20 is the end-of-interrupt command code.
