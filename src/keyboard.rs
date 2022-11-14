@@ -1,11 +1,12 @@
 /* code for PS/2 keyboard handling */
 
 use crate::interrupts::GateType;
-use crate::{interrupts, io, pic};
+use crate::{interrupts, io, pic, print};
 use spin::Mutex;
 
 /// Key down map for scancode set 1
 #[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Key {
     Escape = 0x01,
     R1 = 0x02,
@@ -103,6 +104,64 @@ impl Key {
         }
         None
     }
+
+    pub fn to_char(&self) -> char {
+        match *self {
+            Key::A => 'a',
+            Key::B => 'b',
+            Key::C => 'c',
+            Key::D => 'd',
+            Key::E => 'e',
+            Key::F => 'f',
+            Key::G => 'g',
+            Key::H => 'h',
+            Key::I => 'i',
+            Key::J => 'j',
+            Key::K => 'k',
+            Key::L => 'l',
+            Key::M => 'm',
+            Key::N => 'n',
+            Key::O => 'o',
+            Key::P => 'p',
+            Key::Q => 'q',
+            Key::R => 'r',
+            Key::S => 's',
+            Key::T => 't',
+            Key::U => 'u',
+            Key::V => 'v',
+            Key::W => 'w',
+            Key::X => 'x',
+            Key::Y => 'y',
+            Key::Z => 'z',
+            Key::R1 | Key::NP1 => '1',
+            Key::R2 | Key::NP2 => '2',
+            Key::R3 | Key::NP3 => '3',
+            Key::R4 | Key::NP4 => '4',
+            Key::R5 | Key::NP5 => '5',
+            Key::R6 | Key::NP6 => '6',
+            Key::R7 | Key::NP7 => '7',
+            Key::R8 | Key::NP8 => '8',
+            Key::R9 | Key::NP9 => '9',
+            Key::R0 | Key::NP0 => '0',
+            Key::Comma => ',',
+            Key::Dot | Key::NPDot => '.',
+            Key::Equals => '=',
+            Key::NPPlus => '+',
+            Key::Minus | Key::NPMinus => '-',
+            Key::Slash => '/',
+            Key::Quote => '\'',
+            Key::LeftBracket => '[',
+            Key::RightBracket => ']',
+            Key::Backslash => '\\',
+            Key::NPAsterisk => '*',
+            Key::Tilde => '`',
+            Key::Space => ' ',
+            Key::Enter => '\n',
+            Key::Tab => '\t',
+            Key::Semicolon => ';',
+            _ => '\0'
+        }
+    }
 }
 
 const MAX_SCANCODE: usize = Key::F12 as usize;
@@ -133,8 +192,18 @@ extern "x86-interrupt" fn on_key() {
         scancode = scancode - 0x80;
         pressed = false;
     }
+    else {
+        let key = Key::from_u8(scancode).unwrap();
+        if key == Key::Backspace {
+            crate::vga_console::CONSOLE.lock().backspace();
+        }
+        else {
+            print!("{}", key.to_char());
+        }
+    }
 
-    set_key(Key::from_u8(scancode).unwrap(), pressed);
+    let key = Key::from_u8(scancode).unwrap();
+    set_key(key, pressed);
 
     pic::send_eoi(1);
 }

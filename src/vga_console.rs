@@ -1,7 +1,6 @@
 use crate::io;
-use crate::io::{Clear, Seek};
+use crate::io::{Clear, Seek, Write};
 use core::fmt;
-use core::fmt::Write;
 use spin::{Lazy, Mutex};
 use volatile::Volatile;
 
@@ -100,9 +99,8 @@ impl io::Write for Console {
         for byte in str.bytes() {
             match byte {
                 0x20..=0x7E => self.buffer.write(&mut self.ptr, byte, self.color),
-                b'\n' => {
-                    self.newline_raw();
-                }
+                b'\n' => self.newline_raw(),
+                b'\t' => self.write_string("    "),
                 _ => self.buffer.write(&mut self.ptr, b'?', self.color),
             }
         }
@@ -112,7 +110,6 @@ impl io::Write for Console {
 
 impl fmt::Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        use crate::io::Write;
         self.write_string(s);
         Ok(())
     }
@@ -179,6 +176,22 @@ impl Console {
         self.newline_raw();
         self.update_cursor()
     }
+
+    pub fn backspace(&mut self) {
+        let mut new_pos = self.ptr - 1;
+        if new_pos < 0 { return; }
+        self.buffer.write(&mut new_pos, b' ', self.color);
+        // if we backspaced a newline, go to the end of the text in the previous line
+        if new_pos % VGA_BUFFER_WIDTH == 0 {
+            while self.ptr > new_pos - VGA_BUFFER_WIDTH && self.buffer.buffer[self.ptr] == Volatile::new(b' ') {
+                self.ptr -= 1;
+            }
+        }
+        else {
+            self.ptr -= 1;
+        }
+        self.update_cursor();
+    }
 }
 
 pub static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| {
@@ -191,6 +204,7 @@ pub static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| {
 
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
+    use core::fmt::Write;
     let ints_enabled = crate::interrupts::is_enabled();
     if ints_enabled {
         // interrupts might mean another print, which would cause a deadlock.
