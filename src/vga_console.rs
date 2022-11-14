@@ -1,9 +1,9 @@
+use crate::io;
+use crate::io::{Clear, Seek};
 use core::fmt;
 use core::fmt::Write;
 use spin::{Lazy, Mutex};
 use volatile::Volatile;
-use crate::io;
-use crate::io::{Seek, Clear};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -48,10 +48,34 @@ const VGA_BUFFER_HEIGHT: usize = 15;
 const VGA_BUFFER_SIZE: usize = VGA_BUFFER_WIDTH * VGA_BUFFER_HEIGHT;
 
 #[repr(transparent)]
-struct Buffer { buffer: [Volatile<Char>; VGA_BUFFER_SIZE] }
+struct Buffer {
+    buffer: [Volatile<Char>; VGA_BUFFER_SIZE],
+}
 impl Buffer {
-    fn write(&mut self, ptr: usize, byte: u8, color: ColorCode) {
-        self.buffer[ptr].write(Char { byte, color });
+    fn write(&mut self, ptr: &mut usize, byte: u8, color: ColorCode) {
+        if *ptr >= VGA_BUFFER_SIZE {
+            self.scroll_down(ptr, color);
+        }
+        self.buffer[*ptr].write(Char { byte, color });
+        *ptr += 1;
+    }
+
+    /// scrolls everything one line up, giving us another usable line..
+    fn scroll_down(&mut self, ptr: &mut usize, color: ColorCode) {
+        // copy each line to the one above it
+        for row in 1..VGA_BUFFER_HEIGHT {
+            for col in 0..VGA_BUFFER_WIDTH {
+                // set the char directly above us to the current char.
+                self.buffer[(row - 1) * VGA_BUFFER_WIDTH + col]
+                    .write(self.buffer[row * VGA_BUFFER_WIDTH + col].read());
+            }
+        }
+        // clear the last line
+        for col in 0..VGA_BUFFER_WIDTH {
+            self.buffer[(VGA_BUFFER_HEIGHT - 1) * VGA_BUFFER_WIDTH + col]
+                .write(Char { byte: b' ', color });
+        }
+        *ptr -= VGA_BUFFER_WIDTH;
     }
 }
 
@@ -63,28 +87,24 @@ pub struct Console {
 
 impl io::Write for Console {
     fn write_byte(&mut self, byte: u8) {
-        self.buffer.write(self.ptr, byte, self.color);
-        self.ptr += 1;
+        self.buffer.write(&mut self.ptr, byte, self.color);
         self.update_cursor();
     }
     fn write_bytes(&mut self, bytes: &[u8]) {
         for byte in bytes {
-            self.buffer.write(self.ptr, *byte, self.color);
-            self.ptr += 1;
+            self.buffer.write(&mut self.ptr, *byte, self.color);
         }
         self.update_cursor();
     }
     fn write_string(&mut self, str: &str) {
         for byte in str.bytes() {
             match byte {
-                0x20..=0x7E => self.buffer.write(self.ptr, byte, self.color),
+                0x20..=0x7E => self.buffer.write(&mut self.ptr, byte, self.color),
                 b'\n' => {
                     self.newline_raw();
-                    self.ptr -= 1; // we don't want to increase the pointer if this is a newline.
-                },
-                _ => self.buffer.write(self.ptr, b'?', self.color)
+                }
+                _ => self.buffer.write(&mut self.ptr, b'?', self.color),
             }
-            self.ptr += 1;
         }
         self.update_cursor();
     }
@@ -105,14 +125,17 @@ impl Seek for Console {
     }
 
     #[inline]
-    fn get_cursor_position(&self) -> usize { self.ptr }
+    fn get_cursor_position(&self) -> usize {
+        self.ptr
+    }
 }
 
 impl Clear for Console {
     fn clear(&mut self) {
         self.seek_raw(0);
         for i in 0..VGA_BUFFER_SIZE {
-            self.buffer.write(i, b' ', self.color);
+            let mut copy = i;
+            self.buffer.write(&mut copy, b' ', self.color);
         }
         self.seek(0);
     }
@@ -120,9 +143,13 @@ impl Clear for Console {
 
 impl Console {
     #[inline]
-    pub fn set_color(&mut self, color: ColorCode) { self.color = color; }
+    pub fn set_color(&mut self, color: ColorCode) {
+        self.color = color;
+    }
     #[inline]
-    pub fn get_color(&self) -> ColorCode { self.color }
+    pub fn get_color(&self) -> ColorCode {
+        self.color
+    }
 
     pub fn update_cursor(&self) {
         unsafe {
@@ -137,7 +164,9 @@ impl Console {
 
     /// Set the cursor's logical position without updating its visual position.
     #[inline]
-    pub fn seek_raw(&mut self, value: usize) { self.ptr = value; }
+    pub fn seek_raw(&mut self, value: usize) {
+        self.ptr = value;
+    }
 
     /// Move the cursor's logical position to the next line without updating its visual position.
     #[inline]
@@ -152,15 +181,25 @@ impl Console {
     }
 }
 
-pub static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| Mutex::new(Console {
-    ptr: 0,
-    color: ColorCode::new(Color::White, Color::Black),
-    buffer: unsafe { &mut *(0xB8000 as *mut Buffer) } // address of VGA text buffer
-}));
+pub static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| {
+    Mutex::new(Console {
+        ptr: 0,
+        color: ColorCode::new(Color::White, Color::Black),
+        buffer: unsafe { &mut *(0xB8000 as *mut Buffer) }, // address of VGA text buffer
+    })
+});
 
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
+    let ints_enabled = crate::interrupts::is_enabled();
+    if ints_enabled {
+        // interrupts might mean another print, which would cause a deadlock.
+        crate::interrupts::disable();
+    }
     CONSOLE.lock().write_fmt(args).unwrap();
+    if ints_enabled {
+        crate::interrupts::enable();
+    }
 }
 
 #[macro_export]

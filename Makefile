@@ -26,11 +26,17 @@ all: $(ISO_OUTPUT) $(SYMBOLS)
 
 build: $(ISO_OUTPUT)
 
+debug: all
+	screen -d -m $(QEMU) $(QEMU_ARGS) -S -s
+
+run: build
+	$(QEMU) $(QEMU_ARGS)
+
 clean:
 	@rm -rf $(OBJ_DIR)
 
 
-$(LIB_FILE): $(wildcard src/**/*.rs)
+$(LIB_FILE): $(wildcard src/*.rs)
 	@cargo build
 $(BOOT_OBJ): $(LIB_FILE)
 	@nasm $(BOOT_FILE) $(NASM_ARGS) -o $(BOOT_OBJ)

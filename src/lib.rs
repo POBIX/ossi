@@ -10,18 +10,24 @@ use core::panic::PanicInfo;
 
 pub mod interrupts;
 pub mod io;
-pub mod vga_console;
+pub mod keyboard;
 pub mod pic;
+pub mod vga_console;
+pub mod timer;
 
 #[no_mangle]
 pub extern "C" fn main() -> ! {
     CONSOLE.lock().clear();
     pic::remap();
+    timer::init();
+    keyboard::init();
     interrupts::init();
-    unsafe {
-        asm!("int3");
+
+    loop {
+        unsafe {
+            asm!("hlt");
+        }
     }
-    loop {}
 }
 
 #[panic_handler]
