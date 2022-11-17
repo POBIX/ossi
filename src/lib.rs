@@ -1,7 +1,10 @@
 #![feature(abi_x86_interrupt)]
 #![feature(once_cell)]
+#![feature(default_alloc_error_handler)]
 #![no_std]
 #![no_main]
+
+extern crate alloc;
 
 use crate::io::Clear;
 use crate::vga_console::CONSOLE;
@@ -14,6 +17,8 @@ pub mod keyboard;
 pub mod pic;
 pub mod vga_console;
 pub mod timer;
+pub mod heap;
+mod grub;
 
 #[no_mangle]
 pub extern "C" fn main() -> ! {
