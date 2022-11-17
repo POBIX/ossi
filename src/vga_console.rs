@@ -50,6 +50,7 @@ const VGA_BUFFER_SIZE: usize = VGA_BUFFER_WIDTH * VGA_BUFFER_HEIGHT;
 struct Buffer {
     buffer: [Volatile<Char>; VGA_BUFFER_SIZE],
 }
+
 impl Buffer {
     fn write(&mut self, ptr: &mut usize, byte: u8, color: ColorCode) {
         if *ptr >= VGA_BUFFER_SIZE {
@@ -183,11 +184,12 @@ impl Console {
         self.buffer.write(&mut new_pos, b' ', self.color);
         // if we backspaced a newline, go to the end of the text in the previous line
         if new_pos % VGA_BUFFER_WIDTH == 0 {
-            while self.ptr > new_pos - VGA_BUFFER_WIDTH && self.buffer.buffer[self.ptr] == Volatile::new(b' ') {
+            while self.ptr > new_pos - VGA_BUFFER_WIDTH && // don't overflow to the previous line if there's no text
+                self.buffer.buffer[self.ptr - 1].read() == (Char { byte: b' ', color: self.color })
+            {
                 self.ptr -= 1;
             }
-        }
-        else {
+        } else {
             self.ptr -= 1;
         }
         self.update_cursor();
