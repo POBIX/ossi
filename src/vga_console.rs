@@ -179,8 +179,8 @@ impl Console {
     }
 
     pub fn backspace(&mut self) {
+        if self.ptr == 0 { return; } // if we're at the first character, there's nothing more to erase.
         let mut new_pos = self.ptr - 1;
-        if new_pos < 0 { return; }
         self.buffer.write(&mut new_pos, b' ', self.color);
         // if we backspaced a newline, go to the end of the text in the previous line
         if new_pos % VGA_BUFFER_WIDTH == 0 {
