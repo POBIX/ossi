@@ -49,7 +49,7 @@ $(SYMBOLS): $(BOOT_OBJ)
 $(BIN_OUTPUT): $(BOOT_OBJ) | $(ISO_DIR)
 	@$(GCC) $(BOOT_OBJ) $(BIN_LINK_ARGS) -o $(BIN_OUTPUT)
 
-$(ISO_OUTPUT): $(BIN_OUTPUT) | $(ISO_DIR)
+$(ISO_OUTPUT): $(BIN_OUTPUT) | $(ISO_DIR) | grub.cfg
 	@grub2-mkrescue $(ISO_DIR) -o $(ISO_OUTPUT)
 
 $(ISO_DIR):

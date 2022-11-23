@@ -21,7 +21,9 @@ pub mod heap;
 mod grub;
 
 #[no_mangle]
-pub extern "C" fn main() -> ! {
+pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
+    grub::verify(magic, info.flags).unwrap();
+
     CONSOLE.lock().clear();
     pic::remap();
     timer::init();

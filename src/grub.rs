@@ -1,62 +1,26 @@
-use core::arch::asm;
+// this file is pretty much a rust adaptation of some stuff from https://www.gnu.org/software/grub/manual/multiboot/html_node/multiboot_002eh.html
 
 #[repr(C)]
 pub(crate) struct MultibootInfo {
-    drives_length: u32,
-    drives_addr: u32,
-    config_table: u32,
-    boot_loader_name: u32,
-    apm_table: u32,
-    vbe_control_info: u32,
-    vbe_mode_info: u32,
-    vbe_mode: u32,
-    vbe_interface_seg: u16,
-    vbe_interface_off: u16,
-    vbe_interface_len: u16,
-    framebuffer_addr: u64,
-    framebuffer_pitch: u32,
-    framebuffer_width: u32,
-    framebuffer_height: u32,
-    framebuffer_bpp: u8,
-    framebuffer_type: u8,
-    union: FramebufferUnion
+    pub flags: u32,
+    pub mem_lower: u32,
+    pub mem_upper: u32,
+    // there are a ton of other fields, but at least for now, we only need the top 3, so why bother?
+    _padding: [u8; 120-3*4] // 120 is the actual size of the struct, 3 fields * 4 bytes each.
 }
 
-#[repr(C)]
-pub(crate) struct FramebufferUnionA {
-    framebuffer_palette_addr: u32,
-    framebuffer_palette_num_colors: u16
-}
+/// GRUB puts this number into EAX. If its contents are different, something has gone really wrong
+const MAGIC_NUMBER: u32 = 0x2BADB002;
+/// Bitmask for finding out whether the low/high memory info in MultibootInfo is valid
+const MULTIBOOT_INFO_MEMORY: u32 = 0x00000001;
 
-#[repr(C)]
-pub(crate) struct FramebufferUnionB {
-    framebuffer_red_field_position: u8,
-    framebuffer_red_mask_size: u8,
-    framebuffer_green_field_position: u8,
-    framebuffer_green_mask_size: u8,
-    framebuffer_blue_field_position: u8,
-    framebuffer_blue_mask_size: u8
-}
-
-impl core::ops::Drop for FramebufferUnionA {
-    fn drop(&mut self) {}
-}
-
-impl core::ops::Drop for FramebufferUnionB {
-    fn drop(&mut self) {}
-}
-
-#[repr(C)]
-pub(crate) union FramebufferUnion {
-    a: FramebufferUnionA,
-    b: FramebufferUnionB
-}
-
-impl MultibootInfo {
-    /// returns the MultibootInfo pointer that GRUB loads into EBX at startup.
-    pub unsafe fn from_ebx() -> &'static MultibootInfo {
-        let ret: u32;
-        asm!("mov {:e}, ebx", out(reg) ret);
-        ret as &MultibootInfo
+pub(crate) fn verify(magic: u32, flags: u32) -> Result<(), &'static str> {
+    if magic != MAGIC_NUMBER {
+        return Err("GRUB magic number incorrect.");
     }
+    if flags & MULTIBOOT_INFO_MEMORY == 0 {
+        return Err("Basic multiboot memory info invalid.");
+    }
+
+    Ok(())
 }

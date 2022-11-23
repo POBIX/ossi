@@ -73,16 +73,18 @@ _start:
   jmp CODE_SEG:new_cs
 
 new_cs:
-  mov ax, DATA_SEG
-  mov ds, ax
-  mov es, ax
-  mov fs, ax
-  mov gs, ax
-  mov ss, ax
+  mov dx, DATA_SEG
+  mov ds, dx
+  mov es, dx
+  mov fs, dx
+  mov gs, dx
+  mov ss, dx
 
   mov esp, stack_top ; initialize stack
 
   extern main ; main is defined in rust
+  push eax ; magic number to verify successful GRUB boot
+  push ebx ; address of a src/grub.rs::MultibootInfo struct, provided to us by GRUB.
   call main
 
   ; once the kernel returns (this should theoretically never happen after it's done), loop forever
