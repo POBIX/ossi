@@ -70,6 +70,8 @@ unsafe impl GlobalAlloc for Heap {
         while ptr < self.memory.add(self.size) {
             // every time we reach the beginning of this loop, ptr should point to a Data struct.
             let data = *(ptr as *const Data);
+            let align_offset = ptr.add(size_of::<Data>()).align_offset(layout.align());
+            let actual_size = layout.size() + align_offset;
 
             // if this block is used, go to the next one.
             if data.used {
@@ -79,16 +81,16 @@ unsafe impl GlobalAlloc for Heap {
 
             // if we've reached the end of allocated memory (which is contiguous)
             if data.size == 0 {
-                self.panic_if_oom(ptr, layout.size());
+                self.panic_if_oom(ptr, actual_size);
 
                 crate::interrupts::enable();
-                return self.alloc_raw(ptr, layout.size())
+                return self.alloc_raw(ptr, actual_size).add(align_offset);
             }
 
             // if our data fits in this block
-            if data.size >= layout.size() {
+            if data.size >= actual_size {
                 crate::interrupts::enable();
-                return self.alloc_chunk(ptr, layout.size());
+                return self.alloc_chunk(ptr, actual_size).add(align_offset);
             }
 
             // otherwise, it's possible that we have a couple of unused blocks in a row which can be
@@ -96,7 +98,7 @@ unsafe impl GlobalAlloc for Heap {
             let mut size_sum: usize = data.size;
             let root_ptr = ptr;
             let mut success = true;
-            while size_sum < layout.size() {
+            while size_sum < actual_size {
                 ptr = ptr.add(data.size + size_of::<Data>()); // go to the next block
                 let data = *(ptr as *const Data);
                 if data.used { 
@@ -104,15 +106,15 @@ unsafe impl GlobalAlloc for Heap {
                     break;
                 }
                 if data.size == 0 {
-                    size_sum += self.panic_if_oom(ptr, layout.size());
-                    success = size_sum >= layout.size();
+                    size_sum += self.panic_if_oom(ptr, actual_size);
+                    success = size_sum >= actual_size;
                     break;
                 }
                 size_sum += data.size;
             }
 
             if success {
-                return self.alloc_raw(root_ptr, size_sum);
+                return self.alloc_raw(root_ptr, size_sum).add(actual_size);
             }
         }
 
