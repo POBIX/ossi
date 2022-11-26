@@ -1,5 +1,6 @@
 /* code for PS/2 keyboard handling */
 
+use crate::events::{Event, EventHandler};
 use crate::interrupts::GateType;
 use crate::{interrupts, io, pic, print};
 use spin::Mutex;
@@ -159,7 +160,7 @@ impl Key {
             Key::Enter => '\n',
             Key::Tab => '\t',
             Key::Semicolon => ';',
-            _ => '\0'
+            _ => '\0',
         }
     }
 }
@@ -181,7 +182,9 @@ extern "x86-interrupt" fn on_key() {
     if scancode == 0xE0 {
         // if this is an extended scancode, ignore it for now.
 
-        unsafe { io::inb(0x60); } // clear the keyboard's buffer.
+        unsafe {
+            io::inb(0x60);
+        } // clear the keyboard's buffer.
 
         pic::send_eoi(1);
         return;
@@ -192,18 +195,15 @@ extern "x86-interrupt" fn on_key() {
         scancode = scancode - 0x80;
         pressed = false;
     }
-    else {
-        let key = Key::from_u8(scancode).unwrap();
-        if key == Key::Backspace {
-            crate::vga_console::CONSOLE.lock().backspace();
-        }
-        else {
-            print!("{}", key.to_char());
-        }
-    }
 
     let key = Key::from_u8(scancode).unwrap();
     set_key(key, pressed);
+
+    if pressed {
+        ON_KEY_DOWN.lock().invoke(KeyArgs(key));
+    } else {
+        ON_KEY_UP.lock().invoke(KeyArgs(key));
+    }
 
     pic::send_eoi(1);
 }
@@ -217,7 +217,7 @@ pub fn is_key_pressed(key: Key) -> bool {
     unsafe {
         let (index, bit) = get_pos(key);
         ((KEYS.lock()[index] >> bit) & 1) == 1
-    } // check whether that bit is set
+    }
 }
 
 pub fn set_key(key: Key, pressed: bool) {
@@ -233,3 +233,9 @@ pub fn set_key(key: Key, pressed: bool) {
 // an array in which each bit corresponds to a scancode.
 // e.g. while A is pressed (scancode 0x1E=30), the 6th bit of the 3rd element will be 1. (8*3+6=30)
 static mut KEYS: Mutex<[u8; MAX_SCANCODE / 8]> = Mutex::new([0; MAX_SCANCODE / 8]);
+
+#[derive(Clone, Copy)]
+pub struct KeyArgs(pub Key);
+
+pub static ON_KEY_DOWN: Mutex<Event<KeyArgs>> = Mutex::new(Event::<KeyArgs>::new());
+pub static ON_KEY_UP: Mutex<Event<KeyArgs>> = Mutex::new(Event::<KeyArgs>::new());
