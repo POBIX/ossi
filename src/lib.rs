@@ -23,6 +23,10 @@ mod grub;
 #[no_mangle]
 pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     grub::verify(magic, info.flags).unwrap();
+    unsafe {
+        // according to GRUB, there are info.mem_upper free KBs of memory at address 0x100_000.
+        heap::init(0xA00_000, info.mem_upper * 1024 / 50); // divided to get faster loading times.
+    }
 
     CONSOLE.lock().clear();
     pic::remap();

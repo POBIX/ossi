@@ -27,10 +27,11 @@ all: $(ISO_OUTPUT) $(SYMBOLS)
 build: $(ISO_OUTPUT)
 
 debug: all
-	screen -d -m $(QEMU) $(QEMU_ARGS) -S -s
+	@screen -d -m $(QEMU) $(QEMU_ARGS) -S -s
+	sleep 1
 
 run: build
-	$(QEMU) $(QEMU_ARGS)
+	@$(QEMU) $(QEMU_ARGS)
 
 clean:
 	@rm -rf $(OBJ_DIR)
@@ -49,7 +50,7 @@ $(SYMBOLS): $(BOOT_OBJ)
 $(BIN_OUTPUT): $(BOOT_OBJ) | $(ISO_DIR)
 	@$(GCC) $(BOOT_OBJ) $(BIN_LINK_ARGS) -o $(BIN_OUTPUT)
 
-$(ISO_OUTPUT): $(BIN_OUTPUT) | $(ISO_DIR) | grub.cfg
+$(ISO_OUTPUT): $(BIN_OUTPUT) | $(ISO_DIR) grub.cfg
 	@grub2-mkrescue $(ISO_DIR) -o $(ISO_OUTPUT)
 
 $(ISO_DIR):

@@ -3,8 +3,8 @@
 #[repr(C)]
 pub(crate) struct MultibootInfo {
     pub flags: u32,
-    pub mem_lower: u32,
-    pub mem_upper: u32,
+    pub mem_lower: usize,
+    pub mem_upper: usize,
     // there are a ton of other fields, but at least for now, we only need the top 3, so why bother?
     _padding: [u8; 120-3*4] // 120 is the actual size of the struct, 3 fields * 4 bytes each.
 }
