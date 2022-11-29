@@ -2,7 +2,7 @@
 
 use crate::events::{Event, EventHandler};
 use crate::interrupts::GateType;
-use crate::{interrupts, io, pic, print};
+use crate::{interrupts, io, pic};
 use spin::Mutex;
 
 /// Key down map for scancode set 1
@@ -94,11 +94,38 @@ pub enum Key {
     NPDot = 0x53,
     F11 = 0x57,
     F12 = 0x58,
+
+    // these keys are all extended scancodes and their values are meaningless.
+    MMPrevious,
+    MMNext,
+    NPEnter,
+    Mute,
+    Calculator,
+    MMPlay,
+    MMStop,
+    VolumeDown,
+    VolumeUp,
+    Home,
+    Up,
+    PageUp,
+    Left,
+    Right,
+    End,
+    Down,
+    PageDown,
+    Insert,
+    Delete,
+    Menu,
+    RCtrl,
+    RAlt,
+    NPSlash,
+    Unknown, // (not an actual key lol)
 }
 
 impl Key {
     pub fn from_u8(val: u8) -> Option<Key> {
-        if (val > 0 && val < 0x54) || (val == 0x57 || val == 0x58) {
+        // if the Key enum contains val
+        if (val > 0 && val <= 0x53) || (val == 0x57 || val == 0x58) {
             unsafe {
                 return Some(core::mem::transmute::<u8, Key>(val));
             }
@@ -106,66 +133,121 @@ impl Key {
         None
     }
 
-    pub fn to_char(&self) -> char {
+    pub fn to_char(&self) -> Option<char> {
         match *self {
-            Key::A => 'a',
-            Key::B => 'b',
-            Key::C => 'c',
-            Key::D => 'd',
-            Key::E => 'e',
-            Key::F => 'f',
-            Key::G => 'g',
-            Key::H => 'h',
-            Key::I => 'i',
-            Key::J => 'j',
-            Key::K => 'k',
-            Key::L => 'l',
-            Key::M => 'm',
-            Key::N => 'n',
-            Key::O => 'o',
-            Key::P => 'p',
-            Key::Q => 'q',
-            Key::R => 'r',
-            Key::S => 's',
-            Key::T => 't',
-            Key::U => 'u',
-            Key::V => 'v',
-            Key::W => 'w',
-            Key::X => 'x',
-            Key::Y => 'y',
-            Key::Z => 'z',
-            Key::R1 | Key::NP1 => '1',
-            Key::R2 | Key::NP2 => '2',
-            Key::R3 | Key::NP3 => '3',
-            Key::R4 | Key::NP4 => '4',
-            Key::R5 | Key::NP5 => '5',
-            Key::R6 | Key::NP6 => '6',
-            Key::R7 | Key::NP7 => '7',
-            Key::R8 | Key::NP8 => '8',
-            Key::R9 | Key::NP9 => '9',
-            Key::R0 | Key::NP0 => '0',
-            Key::Comma => ',',
-            Key::Dot | Key::NPDot => '.',
-            Key::Equals => '=',
-            Key::NPPlus => '+',
-            Key::Minus | Key::NPMinus => '-',
-            Key::Slash => '/',
-            Key::Quote => '\'',
-            Key::LeftBracket => '[',
-            Key::RightBracket => ']',
-            Key::Backslash => '\\',
-            Key::NPAsterisk => '*',
-            Key::Tilde => '`',
-            Key::Space => ' ',
-            Key::Enter => '\n',
-            Key::Tab => '\t',
-            Key::Semicolon => ';',
-            _ => '\0',
+            Key::A => Some('a'),
+            Key::B => Some('b'),
+            Key::C => Some('c'),
+            Key::D => Some('d'),
+            Key::E => Some('e'),
+            Key::F => Some('f'),
+            Key::G => Some('g'),
+            Key::H => Some('h'),
+            Key::I => Some('i'),
+            Key::J => Some('j'),
+            Key::K => Some('k'),
+            Key::L => Some('l'),
+            Key::M => Some('m'),
+            Key::N => Some('n'),
+            Key::O => Some('o'),
+            Key::P => Some('p'),
+            Key::Q => Some('q'),
+            Key::R => Some('r'),
+            Key::S => Some('s'),
+            Key::T => Some('t'),
+            Key::U => Some('u'),
+            Key::V => Some('v'),
+            Key::W => Some('w'),
+            Key::X => Some('x'),
+            Key::Y => Some('y'),
+            Key::Z => Some('z'),
+            Key::R1 | Key::NP1 => Some('1'),
+            Key::R2 | Key::NP2 => Some('2'),
+            Key::R3 | Key::NP3 => Some('3'),
+            Key::R4 | Key::NP4 => Some('4'),
+            Key::R5 | Key::NP5 => Some('5'),
+            Key::R6 | Key::NP6 => Some('6'),
+            Key::R7 | Key::NP7 => Some('7'),
+            Key::R8 | Key::NP8 => Some('8'),
+            Key::R9 | Key::NP9 => Some('9'),
+            Key::R0 | Key::NP0 => Some('0'),
+            Key::Comma => Some(','),
+            Key::Dot | Key::NPDot => Some('.'),
+            Key::Equals => Some('='),
+            Key::NPPlus => Some('+'),
+            Key::Minus | Key::NPMinus => Some('-'),
+            Key::Slash => Some('/'),
+            Key::Quote => Some('\''),
+            Key::LeftBracket => Some('['),
+            Key::RightBracket => Some(']'),
+            Key::Backslash => Some('\\'),
+            Key::NPAsterisk => Some('*'),
+            Key::Tilde => Some('`'),
+            Key::Space => Some(' '),
+            Key::Enter => Some('\n'),
+            Key::Tab => Some('\t'),
+            Key::Semicolon => Some(';'),
+            _ => None,
+        }
+    }
+
+    pub fn to_shifted_char(&self) -> Option<char> {
+        match *self {
+            Key::A => Some('A'),
+            Key::B => Some('B'),
+            Key::C => Some('C'),
+            Key::D => Some('D'),
+            Key::E => Some('E'),
+            Key::F => Some('F'),
+            Key::G => Some('G'),
+            Key::H => Some('H'),
+            Key::I => Some('I'),
+            Key::J => Some('J'),
+            Key::K => Some('K'),
+            Key::L => Some('L'),
+            Key::M => Some('M'),
+            Key::N => Some('N'),
+            Key::O => Some('O'),
+            Key::P => Some('P'),
+            Key::Q => Some('Q'),
+            Key::R => Some('R'),
+            Key::S => Some('S'),
+            Key::T => Some('T'),
+            Key::U => Some('U'),
+            Key::V => Some('V'),
+            Key::W => Some('W'),
+            Key::X => Some('X'),
+            Key::Y => Some('Y'),
+            Key::Z => Some('Z'),
+            Key::R1 => Some('!'),
+            Key::R2 => Some('@'),
+            Key::R3 => Some('#'),
+            Key::R4 => Some('$'),
+            Key::R5 => Some('%'),
+            Key::R6 => Some('^'),
+            Key::R7 => Some('&'),
+            Key::R8 => Some('*'),
+            Key::R9 => Some('('),
+            Key::R0 => Some(')'),
+            Key::Comma => Some('<'),
+            Key::Dot => Some('>'),
+            Key::Equals => Some('+'),
+            Key::Minus => Some('_'),
+            Key::Slash => Some('?'),
+            Key::Quote => Some('"'),
+            Key::LeftBracket => Some('{'),
+            Key::RightBracket => Some('}'),
+            Key::Backslash => Some('|'),
+            Key::Tilde => Some('~'),
+            Key::Space => Some(' '),
+            Key::Enter => Some('\n'),
+            Key::Semicolon => Some(':'),
+            _ => None,
         }
     }
 }
 
-const MAX_SCANCODE: usize = Key::F12 as usize;
+const MAX_SCANCODE: usize = Key::Unknown as usize;
 
 pub fn init() {
     unsafe {
@@ -175,28 +257,54 @@ pub fn init() {
     }
 }
 
+fn get_state(scancode: u8) -> (u8, bool) {
+    if scancode > 0x80 {
+        // when a key is released, the keyboard sends the regular scancode + 0x80.
+        return (scancode - 0x80, false);
+    }
+    (scancode, true)
+}
+
 extern "x86-interrupt" fn on_key() {
     let mut scancode = unsafe { io::inb(0x60) };
-    let mut pressed = true;
+    let pressed;
+    let key: Key;
 
     if scancode == 0xE0 {
-        // if this is an extended scancode, ignore it for now.
-
-        unsafe {
-            io::inb(0x60);
-        } // clear the keyboard's buffer.
-
-        pic::send_eoi(1);
-        return;
+        // if this is an extended scancode (0xE0), we should have gotten a second byte
+        // that corresponds to one of these keys
+        (scancode, pressed) = unsafe { get_state(io::inb(0x60)) };
+        key = match scancode {
+            0x10 => Key::MMPrevious,
+            0x19 => Key::MMNext,
+            0x1C => Key::NPEnter,
+            0x1D => Key::RCtrl,
+            0x20 => Key::Mute,
+            0x21 => Key::Calculator,
+            0x22 => Key::MMPlay,
+            0x24 => Key::MMStop,
+            0x2E => Key::VolumeDown,
+            0x30 => Key::VolumeUp,
+            0x35 => Key::NPSlash,
+            0x38 => Key::RAlt,
+            0x47 => Key::Home,
+            0x48 => Key::Up,
+            0x49 => Key::PageUp,
+            0x4B => Key::Left,
+            0x4D => Key::Right,
+            0x4F => Key::End,
+            0x50 => Key::Down,
+            0x51 => Key::PageDown,
+            0x52 => Key::Insert,
+            0x53 => Key::Delete,
+            0x5D => Key::Menu,
+            _ => Key::Unknown,
+        };
+    } else {
+        (scancode, pressed) = get_state(scancode);
+        key = Key::from_u8(scancode).unwrap();
     }
 
-    if scancode > MAX_SCANCODE as u8 {
-        // when a key is released, the keyboard sends the regular scancode + 0x80.
-        scancode = scancode - 0x80;
-        pressed = false;
-    }
-
-    let key = Key::from_u8(scancode).unwrap();
     set_key(key, pressed);
 
     if pressed {

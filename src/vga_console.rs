@@ -139,6 +139,12 @@ impl Clear for Console {
     }
 }
 
+impl io::Read for Console {
+    fn read_byte(&self, pos: usize) -> u8 {
+        self.buffer.buffer[pos].read().byte
+    }
+}
+
 impl Console {
     #[inline]
     pub fn set_color(&mut self, color: ColorCode) {

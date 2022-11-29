@@ -6,8 +6,6 @@
 
 extern crate alloc;
 
-use events::EventHandler;
-
 use crate::io::Clear;
 use crate::vga_console::CONSOLE;
 use core::arch::asm;
@@ -22,6 +20,7 @@ pub mod timer;
 pub mod heap;
 mod grub;
 pub mod events;
+pub mod console;
 
 #[no_mangle]
 pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
@@ -36,8 +35,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     timer::init();
     keyboard::init();
     interrupts::init();
-
-    keyboard::ON_KEY_DOWN.lock().subscribe(|key| print!("{}", key.0.to_char()));
+    console::init();
 
     loop {
         unsafe {

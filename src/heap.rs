@@ -126,7 +126,8 @@ unsafe impl GlobalAlloc for Heap {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) {
-        (*(ptr as *mut Data)).used = false;
+        // unset the used flag for the memory block that starts at ptr
+        (*(ptr.sub(size_of::<Data>()) as *mut Data)).used = false;
     }
 }
 
