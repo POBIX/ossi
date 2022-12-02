@@ -21,13 +21,15 @@ pub mod heap;
 mod grub;
 pub mod events;
 pub mod console;
+pub mod ata;
 
 #[no_mangle]
 pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     grub::verify(magic, info.flags).unwrap();
     unsafe {
         // according to GRUB, there are info.mem_upper free KBs of memory at address 0x100_000.
-        heap::init(0xA00_000, info.mem_upper * 1024 / 50); // divided to get faster loading times.
+        // we're dividing by 50 (not using our entire available memory) to get faster loading times.
+        heap::init(0xA00_000, info.mem_upper * 1024 / 50);
     }
 
     CONSOLE.lock().clear();
@@ -36,6 +38,13 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     keyboard::init();
     interrupts::init();
     console::init();
+    ata::init();
+
+    let mut buffer: [u8; 512] = [0; 512];
+    unsafe {
+        ata::read_sectors(&mut buffer, 0x0, 1);
+    }
+    println!("{:?}", buffer);
 
     loop {
         unsafe {
