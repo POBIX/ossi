@@ -255,6 +255,13 @@ pub fn init() {
         interrupts::IDT[pic::IRQ_OFFSET + 1] =
             interrupts::Handler::new(on_key, GateType::DInterrupt);
     }
+
+    ON_KEY_UP.lock().subscribe(|args| {
+        if args.0 == Key::CapsLock {
+            let mut caps = CAPS_LOCK.lock();
+            *caps = !*caps;
+        }
+    });
 }
 
 fn get_state(scancode: u8) -> (u8, bool) {
@@ -269,6 +276,8 @@ extern "x86-interrupt" fn on_key() {
     let mut scancode = unsafe { io::inb(0x60) };
     let pressed;
     let key: Key;
+
+    static mut PREV_EXTENDED: bool = false;
 
     if scancode == 0xE0 {
         // if this is an extended scancode (0xE0), we should have gotten a second byte
@@ -300,7 +309,19 @@ extern "x86-interrupt" fn on_key() {
             0x5D => Key::Menu,
             _ => Key::Unknown,
         };
+        unsafe {
+            PREV_EXTENDED = true;
+        }
     } else {
+        // if the previous call to this function received a 0xE0 (extended scan code),
+        // we want to ignore this one, since it just sends a byte that we've already read.
+        if unsafe { PREV_EXTENDED } {
+            unsafe {
+                PREV_EXTENDED = false;
+            }
+            pic::send_eoi(1);
+            return;
+        }
         (scancode, pressed) = get_state(scancode);
         key = Key::from_u8(scancode).unwrap();
     }
@@ -322,28 +343,34 @@ fn get_pos(key: Key) -> (usize, u8) {
 }
 
 pub fn is_key_pressed(key: Key) -> bool {
-    unsafe {
-        let (index, bit) = get_pos(key);
-        ((KEYS.lock()[index] >> bit) & 1) == 1
-    }
+    let (index, bit) = get_pos(key);
+    ((KEYS.lock()[index] >> bit) & 1) == 1
 }
 
 pub fn set_key(key: Key, pressed: bool) {
     let (index, bit) = get_pos(key);
     let v = pressed as u8;
     // modify the array to have that bit set to the correct value
-    unsafe {
-        let mut keys = KEYS.lock();
-        keys[index] = keys[index] & !(1 << bit) | (v << bit);
-    }
+    let mut keys = KEYS.lock();
+    keys[index] = keys[index] & !(1 << bit) | (v << bit);
+}
+
+pub fn is_caps_lock_active() -> bool {
+    // we can't accept keyboard input while checking the value (what if you press caps lock while reading it?)
+    pic::set_mask(1, true);
+    let ret = *CAPS_LOCK.lock();
+    pic::set_mask(1, false);
+    ret
 }
 
 // an array in which each bit corresponds to a scancode.
 // e.g. while A is pressed (scancode 0x1E=30), the 6th bit of the 3rd element will be 1. (8*3+6=30)
-static mut KEYS: Mutex<[u8; MAX_SCANCODE / 8]> = Mutex::new([0; MAX_SCANCODE / 8]);
+static KEYS: Mutex<[u8; MAX_SCANCODE / 8]> = Mutex::new([0; MAX_SCANCODE / 8]);
 
 #[derive(Clone, Copy)]
 pub struct KeyArgs(pub Key);
 
 pub static ON_KEY_DOWN: Mutex<Event<KeyArgs>> = Mutex::new(Event::<KeyArgs>::new());
 pub static ON_KEY_UP: Mutex<Event<KeyArgs>> = Mutex::new(Event::<KeyArgs>::new());
+
+static CAPS_LOCK: Mutex<bool> = Mutex::new(false);
