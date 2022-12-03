@@ -33,7 +33,7 @@ const STATUS_DRQ: u8 = 0x08;
 const STATUS_ERR: u8 = 0x01;
 
 pub fn init() {
-    use crate::{interrupts::{self, GateType}, pic};
+    use crate::interrupts::{self, GateType};
     unsafe {
         interrupts::IDT[pic::IRQ_OFFSET + 14] = interrupts::Handler::new(irq14, GateType::DInterrupt);
         interrupts::IDT[pic::IRQ_OFFSET + 15] = interrupts::Handler::new(irq15, GateType::DInterrupt);
@@ -53,7 +53,7 @@ extern "x86-interrupt" fn irq15() {
 /// waits until flag is value in the status register.
 #[inline] fn wait_for(flag: u8, value: bool) {
     unsafe {
-        while io::inb(PORT_SR) & flag != (value as u8) {}
+        while (io::inb(PORT_SR) & flag == 0) == value {}
     }
 }
 
@@ -73,7 +73,9 @@ pub unsafe fn read_sectors(buffer: &mut [u8], lba: u32, count: u8) {
     io::outb(PORT_CHR, (lba >> 16) as u8);
     io::outb(PORT_CR, 0x20); // send the read command
     let error = io::inb(PORT_ER);
-    println!("{error}");
+    if error != 0 {
+        panic!("ATA read failed with error code {:0X}", error);
+    }
 
     for i in 0..(count as usize) {
         wait_for(STATUS_BSY, false);
