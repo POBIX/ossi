@@ -57,33 +57,74 @@ extern "x86-interrupt" fn irq15() {
     }
 }
 
-pub unsafe fn read_sectors(buffer: &mut [u8], lba: u32, count: u8) {
-    wait_for(STATUS_BSY, false);
+fn setup_flags(lba: u32, sector_count: u8) {
+    unsafe {
+        // explanation for DHR value:
+        // bits 0-3: bits 24-27 of the LBA block
+        // bit 4: drive number
+        // bit 5: always 1
+        // bit 6: 1=use lba
+        // bit 7: always 1
+        io::outb(PORT_DHR, 0xE0 | (((lba >> 24) as u8) & 0xF));
+        io::outb(PORT_SCR, sector_count);
+        io::outb(PORT_SNR, lba as u8);
+        io::outb(PORT_CLR, (lba >> 8) as u8);
+        io::outb(PORT_CHR, (lba >> 16) as u8);
+    }
+}
 
-    // explanation for DHR value:
-    // bits 0-3: bits 24-27 of the LBA block
-    // bit 4: drive number
-    // bit 5: always 1
-    // bit 6: 1=use lba
-    // bit 7: always 1
-    io::outb(PORT_DHR, 0xE0 | (((lba >> 24) as u8) & 0xF));
-    io::outb(PORT_SCR, count);
-    io::outb(PORT_SNR, lba as u8);
-    io::outb(PORT_CLR, (lba >> 8) as u8);
-    io::outb(PORT_CHR, (lba >> 16) as u8);
-    io::outb(PORT_CR, 0x20); // send the read command
-    let error = io::inb(PORT_ER);
+const fn get_sector_count(arr: &[u8]) -> usize {
+    if arr.len() % 512 != 0 {
+        panic!("size of buffer in bytes must be divisible by 512");
+    }
+    arr.len() / 512
+}
+
+fn panic_if_error() {
+    let error = unsafe { io::inb(PORT_ER) };
     if error != 0 {
         panic!("ATA read failed with error code {:0X}", error);
     }
+}
 
-    for i in 0..(count as usize) {
+pub unsafe fn read_sectors(lba: u32, buffer: &mut [u8]) {
+    wait_for(STATUS_BSY, false);
+
+    let sector_count = get_sector_count(buffer);
+
+    setup_flags(lba, sector_count as u8);
+    io::outb(PORT_CR, 0x20); // send the read command
+    panic_if_error();
+
+    // the disk sends out 16 bytes at a time.
+    let buffer_u16 = core::mem::transmute::<&mut [u8], &mut [u16]>(buffer);
+
+    for i in 0..sector_count {
         wait_for(STATUS_BSY, false);
         wait_for(STATUS_DRQ, true);
         for j in 0..256 {
-            let data = io::inw(PORT_DR);
-            buffer[256*i + j] = data as u8;
-            buffer[256*i + j + 1] = (data >> 8) as u8;
+            buffer_u16[256*i + j] = io::inw(PORT_DR);
+        }
+    }
+}
+
+pub unsafe fn write_sectors(lba: u32, data: &[u8]) {
+    wait_for(STATUS_BSY, false);
+
+    let sector_count = get_sector_count(data);
+
+    setup_flags(lba, sector_count as u8);
+    io::outb(PORT_CR, 0x30); // send the write command
+    panic_if_error();
+
+    // the disk receives 32 bytes at a time.
+    let data_u32 = core::mem::transmute::<&[u8], &[u32]>(data);
+
+    for i in 0..sector_count {
+        wait_for(STATUS_BSY, false);
+        wait_for(STATUS_DRQ, true);
+        for j in 0..256 {
+            io::outl(PORT_DR, data_u32[256*i + j]);
         }
     }
 }

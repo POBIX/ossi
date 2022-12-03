@@ -42,9 +42,15 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
 
     let mut buffer: [u8; 512] = [0; 512];
     unsafe {
-        ata::read_sectors(&mut buffer, 0x0, 1);
+        ata::read_sectors(0, &mut buffer);
     }
-    println!("{:?}", buffer);
+    for i in 0..buffer.len() {
+        print!("{:0X}", buffer[i]);
+        buffer[i] = i as u8;
+    }
+    unsafe {
+        ata::write_sectors(0, &buffer);
+    }
 
     loop {
         unsafe {
