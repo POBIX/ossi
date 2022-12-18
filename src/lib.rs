@@ -22,6 +22,7 @@ mod grub;
 pub mod events;
 pub mod console;
 pub mod ata;
+pub mod fs;
 
 #[no_mangle]
 pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
@@ -29,7 +30,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     unsafe {
         // according to GRUB, there are info.mem_upper free KBs of memory at address 0x100_000.
         // we're dividing by 50 (not using our entire available memory) to get faster loading times.
-        heap::init(0xA00_000, info.mem_upper * 1024 / 50);
+        heap::init(0x100_000, info.mem_upper * 1024 / 50);
     }
 
     CONSOLE.lock().clear();
@@ -40,17 +41,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     console::init();
     ata::init();
 
-    let mut buffer: [u8; 512] = [0; 512];
-    unsafe {
-        ata::read_sectors(0, &mut buffer);
-    }
-    for i in 0..buffer.len() {
-        print!("{:0X}", buffer[i]);
-        buffer[i] = i as u8;
-    }
-    unsafe {
-        ata::write_sectors(0, &buffer);
-    }
+    fs::File::create("/fuck/you/lol.txt");
 
     loop {
         unsafe {
