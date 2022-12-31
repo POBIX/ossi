@@ -1,6 +1,5 @@
 #![feature(abi_x86_interrupt)]
 #![feature(once_cell)]
-#![feature(default_alloc_error_handler)]
 #![no_std]
 #![no_main]
 
@@ -29,8 +28,8 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     grub::verify(magic, info.flags).unwrap();
     unsafe {
         // according to GRUB, there are info.mem_upper free KBs of memory at address 0x100_000.
-        // we're dividing by 50 (not using our entire available memory) to get faster loading times.
-        heap::init(0x100_000, info.mem_upper * 1024 / 50);
+        // we're using a maximum of a 50MB to get faster loading times.
+        heap::init(0x100_000, core::cmp::min(50 * 1024 * 1024, info.mem_upper));
     }
 
     CONSOLE.lock().clear();
@@ -41,7 +40,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     console::init();
     ata::init();
 
-    fs::File::create("/fuck/you/lol.txt");
+    fs::File::create("/fuck/you/lol.txt").unwrap();
 
     loop {
         unsafe {

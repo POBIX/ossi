@@ -1,36 +1,36 @@
-use crate::{io, pic, println};
+use crate::{io, pic};
 
 // these ports assume we want to use the master ATA.
 /// data register
-const PORT_DR: u16 = 0x1F0;
+pub const PORT_DR: u16 = 0x1F0;
 /// error register
-const PORT_ER: u16 = 0x1F1;
+pub const PORT_ER: u16 = 0x1F1;
 /// features register
-const PORT_FR: u16 = 0x1F1;
+pub const PORT_FR: u16 = 0x1F1;
 /// sector count register
-const PORT_SCR: u16 = 0x1F2;
+pub const PORT_SCR: u16 = 0x1F2;
 /// sector number register / LBA low register
-const PORT_SNR: u16 = 0x1F3;
+pub const PORT_SNR: u16 = 0x1F3;
 /// cylinder low register / LBA mid register
-const PORT_CLR: u16 = 0x1F4;
+pub const PORT_CLR: u16 = 0x1F4;
 /// cylinder high register / LBA high register
-const PORT_CHR: u16 = 0x1F5;
+pub const PORT_CHR: u16 = 0x1F5;
 /// drive / head register
-const PORT_DHR: u16 = 0x1F6;
+pub const PORT_DHR: u16 = 0x1F6;
 /// status register
-const PORT_SR: u16 = 0x1F7;
+pub const PORT_SR: u16 = 0x1F7;
 /// command register
-const PORT_CR: u16 = 0x1F7;
+pub const PORT_CR: u16 = 0x1F7;
 
 // flags for the status register
 /// busy executing a command
-const STATUS_BSY: u8 = 0x80;
+pub const STATUS_BSY: u8 = 0x80;
 /// ready to accept a command
-const STATUS_RDY: u8 = 0x40;
+pub const STATUS_RDY: u8 = 0x40;
 /// expecting/sending data
-const STATUS_DRQ: u8 = 0x08;
+pub const STATUS_DRQ: u8 = 0x08;
 /// error occurred
-const STATUS_ERR: u8 = 0x01;
+pub const STATUS_ERR: u8 = 0x01;
 
 pub fn init() {
     use crate::interrupts::{self, GateType};
@@ -38,15 +38,14 @@ pub fn init() {
         interrupts::IDT[pic::IRQ_OFFSET + 14] = interrupts::Handler::new(irq14, GateType::DInterrupt);
         interrupts::IDT[pic::IRQ_OFFSET + 15] = interrupts::Handler::new(irq15, GateType::DInterrupt);
     }
+    //TODO: query maximum HD size. don't allow going over the sector limit
 }
 
 extern "x86-interrupt" fn irq14() {
-    println!("14");
     pic::send_eoi(14);
 }
 
 extern "x86-interrupt" fn irq15() {
-    println!("15");
     pic::send_eoi(15);
 }
 
@@ -73,13 +72,6 @@ fn setup_flags(lba: u32, sector_count: u8) {
     }
 }
 
-const fn get_sector_count(arr: &[u8]) -> usize {
-    if arr.len() % 512 != 0 {
-        panic!("size of buffer in bytes must be divisible by 512");
-    }
-    arr.len() / 512
-}
-
 fn panic_if_error() {
     let error = unsafe { io::inb(PORT_ER) };
     if error != 0 {
@@ -87,44 +79,43 @@ fn panic_if_error() {
     }
 }
 
-pub unsafe fn read_sectors(lba: u32, buffer: &mut [u8]) {
+/// reads the first sector_count sectors from the hard disk, at address lba, into buffer.
+pub unsafe fn read_sectors(lba: u32, buffer: *mut u8, sector_count: usize) {
     wait_for(STATUS_BSY, false);
-
-    let sector_count = get_sector_count(buffer);
 
     setup_flags(lba, sector_count as u8);
     io::outb(PORT_CR, 0x20); // send the read command
     panic_if_error();
 
     // the disk sends out 16 bytes at a time.
-    let buffer_u16 = core::mem::transmute::<&mut [u8], &mut [u16]>(buffer);
+    let buffer_u16 = buffer as *mut u16;
 
     for i in 0..sector_count {
         wait_for(STATUS_BSY, false);
         wait_for(STATUS_DRQ, true);
         for j in 0..256 {
-            buffer_u16[256*i + j] = io::inw(PORT_DR);
+            *buffer_u16.offset((256*i + j) as isize) = io::inw(PORT_DR);
         }
     }
 }
 
-pub unsafe fn write_sectors(lba: u32, data: &[u8]) {
+/// writes the first sector_count sectors of data to the disk, at address lba.
+pub unsafe fn write_sectors(lba: u32, data: *const u8, sector_count: usize) {
     wait_for(STATUS_BSY, false);
-
-    let sector_count = get_sector_count(data);
 
     setup_flags(lba, sector_count as u8);
     io::outb(PORT_CR, 0x30); // send the write command
     panic_if_error();
 
     // the disk receives 32 bytes at a time.
-    let data_u32 = core::mem::transmute::<&[u8], &[u32]>(data);
+    let data_u32 = data as *const u32;
 
     for i in 0..sector_count {
         wait_for(STATUS_BSY, false);
         wait_for(STATUS_DRQ, true);
         for j in 0..256 {
-            io::outl(PORT_DR, data_u32[256*i + j]);
+            let lol = *data_u32.offset((256*i + j) as isize);
+            io::outl(PORT_DR, lol);
         }
     }
 }
