@@ -89,12 +89,13 @@ pub unsafe fn read_sectors(lba: u32, buffer: *mut u8, sector_count: usize) {
 
     // the disk sends out 16 bytes at a time.
     let buffer_u16 = buffer as *mut u16;
+    const SECTOR_SIZE: usize = 512 / 2; // the sector size in our new unit (u16)
 
     for i in 0..sector_count {
         wait_for(STATUS_BSY, false);
         wait_for(STATUS_DRQ, true);
-        for j in 0..256 {
-            *buffer_u16.offset((256*i + j) as isize) = io::inw(PORT_DR);
+        for j in 0..SECTOR_SIZE {
+            *buffer_u16.offset((SECTOR_SIZE*i + j) as isize) = io::inw(PORT_DR);
         }
     }
 }
@@ -109,13 +110,14 @@ pub unsafe fn write_sectors(lba: u32, data: *const u8, sector_count: usize) {
 
     // the disk receives 32 bytes at a time.
     let data_u32 = data as *const u32;
+    const SECTOR_SIZE: usize = 512 / 4; // the sector size in our new unit (u32)
 
     for i in 0..sector_count {
         wait_for(STATUS_BSY, false);
         wait_for(STATUS_DRQ, true);
-        for j in 0..256 {
-            let lol = *data_u32.offset((256*i + j) as isize);
-            io::outl(PORT_DR, lol);
+        for j in 0..SECTOR_SIZE {
+            let block = *data_u32.offset((SECTOR_SIZE*i + j) as isize);
+            io::outl(PORT_DR, block);
         }
     }
 }

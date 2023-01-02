@@ -1,5 +1,6 @@
 #![feature(abi_x86_interrupt)]
 #![feature(once_cell)]
+#![feature(pointer_byte_offsets)]
 #![no_std]
 #![no_main]
 
