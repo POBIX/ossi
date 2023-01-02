@@ -1,6 +1,6 @@
 use core::mem::size_of;
 
-use spin::Mutex;
+use spin::{Mutex, Lazy};
 
 /// The number of sectors the Header struct takes up.
 /// Maximum number of files = HEADER_SECTORS * 512 / size_of::<FileMetadata>() - 1
@@ -73,6 +73,8 @@ impl File {
 
     pub fn create(path: &'static str) -> Result<File, FileError> {
         let mut header = HEADER.lock();
+        let test_header = header.first_null;
+        let test2 = header.entries;
 
         if path.len() >= MAX_PATH_LENGTH {
             return Err(FileError::PathTooLong);
@@ -81,16 +83,10 @@ impl File {
             return Err(FileError::TooManyFiles);
         }
 
-        let mut buffer: [u8; HEADER_SECTORS * 512] = [0; HEADER_SECTORS * 512];
-        unsafe {
-            crate::ata::read_sectors(0, core::mem::transmute(&buffer), HEADER_SECTORS);
-            let header_read: &Header = core::mem::transmute(&buffer);
-            let line_for_debug = 5;
-        }
-
         // header.first_null is the index of the file we're going to create.
         // in order to figure out which sector we should write to,
         // we simply add one sector to the previous file's sector.
+        // (note: the first file should always exist, but be empty and null, because of the index)
         let prev_entry = header.entries[header.first_null - 1];
         let addr: usize = prev_entry.sector + prev_entry.size;
 
@@ -125,12 +121,15 @@ impl File {
     }
 }
 
-const fn read_header() -> Header {
-    Header {
-        first_null: 1, // first entry is always set to null
-        entries: [FileMetadata::null(); MAX_FILES],
-        _padding: [0;1024 - 988]
+fn read_header() -> Mutex<Header> {
+    let buffer: [u8; HEADER_SECTORS * 512] = [0; HEADER_SECTORS * 512];
+    let header: Header;
+    unsafe {
+        crate::ata::read_sectors(0, core::mem::transmute(&buffer), HEADER_SECTORS);
+        header = core::mem::transmute(buffer);
     }
+
+    Mutex::new(header)
 }
 
-static HEADER: Mutex<Header> = Mutex::new(read_header());
+static HEADER: Lazy<Mutex<Header>> = Lazy::new(read_header);

@@ -41,7 +41,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     console::init();
     ata::init();
 
-    fs::File::create("/fuck/you/lol.txt").unwrap();
+    let file = fs::File::create("/my/nice/file.txt").unwrap();
 
     loop {
         unsafe {
