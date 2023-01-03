@@ -168,14 +168,10 @@ impl io::Seek for File {
 impl io::Read for File {
     fn read_byte(&self) -> u8 {
         let sector_offset = self.ptr / 512; // the sector our byte is in
-        let buffer = [0u8; 512]; // we have to read the whole sector, even for just one byte
+        let mut buffer = [0u8; 512]; // we have to read the whole sector, even for just one byte
         let md = self.get_metadata();
         unsafe {
-            crate::ata::read_sectors(
-                (md.sector + sector_offset) as u32,
-                core::mem::transmute(&buffer),
-                1
-            );
+            crate::ata::read_sectors((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
         }
 
         buffer[self.ptr % 512]
@@ -190,11 +186,7 @@ impl io::Read for File {
         let md = self.get_metadata();
 
         unsafe {
-            crate::ata::read_sectors(
-                (md.sector + sector_a) as u32,
-                output.as_mut_ptr(),
-                sector_count
-            )
+            crate::ata::read_sectors((md.sector + sector_a) as u32, output.as_mut_ptr(), sector_count);
         }
 
         // return only the bytes we asked to read, not every sector
@@ -206,21 +198,60 @@ impl io::Read for File {
         let md = self.get_metadata();
         let mut output = vec![0; md.size * 512];
         unsafe {
-            crate::ata::read_sectors(
-                md.sector as u32,
-                output.as_mut_ptr(),
-                md.size
-            );
+            crate::ata::read_sectors(md.sector as u32, output.as_mut_ptr(), md.size);
         }
         output
     }
 }
 
+impl io::Write for File {
+    fn write_byte(&mut self, byte: u8) {
+        let sector_offset = self.ptr / 512; // the sector our byte is in
+        let mut buffer = [0u8; 512]; // we have to write over the whole sector, even for just one byte
+        // in order to not overwrite anything else, read this sector first
+        let md = self.get_metadata();
+        unsafe {
+            crate::ata::read_sectors((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
+        }
+
+        // set the byte
+        buffer[self.ptr % 512] = byte;
+
+        // update the sector on disk
+        unsafe {
+            crate::ata::write_sectors((md.sector + sector_offset) as u32, buffer.as_ptr(), 1);
+        }
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        //todo: resizing :(
+        let sector_a = self.ptr / 512; // the first byte's sector
+        let sector_b = (self.ptr + bytes.len()) / 512; // the last byte's sector
+        let sector_count = sector_b - sector_a + 1;
+
+        // in order to not overwrite everything we're not writing, read first
+        let mut buffer = vec![0; sector_count * 512];
+        let md = self.get_metadata();
+        unsafe {
+            crate::ata::read_sectors((md.sector + sector_a) as u32, buffer.as_mut_ptr(), sector_count);
+        }
+
+        // set the data
+        let ptr_offset = self.ptr % 512;
+        buffer[ptr_offset..(ptr_offset + bytes.len())].copy_from_slice(bytes);
+
+        // update the sectors on disk
+        unsafe {
+            crate::ata::write_sectors((md.sector + sector_a) as u32, buffer.as_ptr(), sector_count);
+        }
+    }
+}
+
 fn read_header() -> Mutex<Header> {
-    let buffer: [u8; HEADER_SECTORS * 512] = [0; HEADER_SECTORS * 512];
+    let mut buffer: [u8; HEADER_SECTORS * 512] = [0; HEADER_SECTORS * 512];
     let header: Header;
     unsafe {
-        crate::ata::read_sectors(0, core::mem::transmute(&buffer), HEADER_SECTORS);
+        crate::ata::read_sectors(0, buffer.as_mut_ptr(), HEADER_SECTORS);
         header = core::mem::transmute(buffer);
     }
 

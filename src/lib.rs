@@ -6,7 +6,7 @@
 
 extern crate alloc;
 
-use crate::io::{Clear, Read};
+use crate::io::{Clear, Read, Write};
 use crate::vga_console::CONSOLE;
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -41,7 +41,8 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     console::init();
     ata::init();
 
-    let file = fs::File::open("/my/nice/file.txt").unwrap();
+    let mut file = fs::File::open("/my/nice/file.txt").unwrap();
+    file.write_string("this is a nice string that tests whether or not the write function works!");
     println!("{}", file.read_string(571).unwrap());
 
     loop {
