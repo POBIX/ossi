@@ -1,27 +1,38 @@
 use core::mem::size_of;
 
+use alloc::vec::Vec;
+use alloc::vec;
 use spin::{Lazy, Mutex};
+
+use crate::io;
 
 /// The number of sectors the Header struct takes up.
 /// Maximum number of files = HEADER_SECTORS * 512 / size_of::<FileMetadata>() - 1
-const HEADER_SECTORS: usize = 2;
-const MAX_FILES: usize = HEADER_SECTORS * 512 / size_of::<FileMetadata>();
+pub const HEADER_SECTORS: usize = 2;
+pub const MAX_FILES: usize = HEADER_SECTORS * 512 / size_of::<FileMetadata>();
 
-const MAX_PATH_LENGTH: usize = 32;
+pub const MAX_PATH_LENGTH: usize = 32;
+
+bitflags::bitflags! {
+    pub struct FileFlags: u8 {
+        const OPENED = 1;
+        const DELETED = 2;
+    }
+}
 
 /// The first sectors of a hard drive using our file system are a list of FileMetadatas.
 /// We use them to find out where each file is. (to map each path to its contents)
 #[repr(packed)]
 #[derive(Clone, Copy)]
-struct FileMetadata {
+pub struct FileMetadata {
     /// a string that contains the path of each file. padded with nulls to the right.
-    path: [u8; MAX_PATH_LENGTH],
+    pub path: [u8; MAX_PATH_LENGTH],
     /// the index of the of the file content's first sector
-    sector: usize,
+    pub sector: usize,
     /// how many sectors does this file take up?
-    size: usize,
-    /// is this file currently open
-    opened: bool,
+    pub size: usize,
+    /// flags for this file
+    pub flags: FileFlags,
 }
 
 /// The struct that sits at the top of the hard drive, containing the FileMetadata maps.
@@ -34,6 +45,7 @@ struct Header {
 
 pub struct File {
     index: usize,
+    ptr: usize
 }
 
 #[derive(Debug)]
@@ -48,6 +60,8 @@ pub enum FileError {
 }
 
 impl File {
+    fn from_index(index: usize) -> File { File { index, ptr: 0 } }
+
     pub fn open(path: &str) -> Result<File, FileError> {
         let mut header = HEADER.lock();
 
@@ -62,20 +76,14 @@ impl File {
             };
             if file_path == path {
                 // found it!
-                if file.opened {
+                if file.flags.contains(FileFlags::OPENED) {
                     return Err(FileError::FileAlreadyOpen);
                 }
-                file.opened = true;
-                return Ok(File { index: i });
+                file.flags.set(FileFlags::OPENED, true);
+                return Ok(File::from_index(i));
             }
         }
         Err(FileError::FileNotFound)
-    }
-
-    pub fn close(&mut self) {
-        let mut header = HEADER.lock();
-        header.entries[self.index].opened = false;
-        self.index = MAX_FILES+1; // mark this reference as invalid
     }
 
     pub fn create(path: &'static str) -> Result<File, FileError> {
@@ -91,6 +99,7 @@ impl File {
         // header.first_null is the index of the file we're going to create.
         // in order to figure out which sector we should write to,
         // we simply add one sector to the previous file's sector.
+        // TODO: this assumes files are never deleted.
         let addr: usize = if header.first_null > 0 {
             let prev = header.entries[header.first_null];
             prev.sector + prev.size
@@ -110,17 +119,101 @@ impl File {
             path: padded_path,
             sector: addr,
             size: 1,
-            opened: false,
+            flags: FileFlags::empty()
         };
         header.first_null += 1;
 
         // update it on disk
         update_header(&header);
 
-        Ok(File { index: first_null })
+        Ok(File::from_index(first_null))
     }
 
-    pub fn delete(&mut self) {}
+    pub fn delete(&mut self) -> Result<(), FileError>{
+        let mut header = HEADER.lock();
+        let metadata = &mut header.entries[self.index];
+
+        if !metadata.flags.contains(FileFlags::OPENED) {
+            return Err(FileError::FileClosed);
+        }
+        metadata.flags.set(FileFlags::DELETED, true);
+        Ok(())
+    }
+
+    #[inline]
+    pub fn get_metadata(&self) -> FileMetadata {
+        HEADER.lock().entries[self.index]
+    }
+}
+
+impl Drop for File {
+    fn drop(&mut self) {
+        // close the file
+        let mut header = HEADER.lock();
+        header.entries[self.index].flags.set(FileFlags::OPENED, false);
+        self.index = MAX_FILES+1; // mark this reference as invalid
+    }
+}
+
+impl io::Seek for File {
+    fn seek(&mut self, pos: usize) {
+        self.ptr = pos;
+    }
+
+    fn get_cursor_position(&self) -> usize {
+        self.ptr
+    }
+}
+
+impl io::Read for File {
+    fn read_byte(&self) -> u8 {
+        let sector_offset = self.ptr / 512; // the sector our byte is in
+        let buffer = [0u8; 512]; // we have to read the whole sector, even for just one byte
+        let md = self.get_metadata();
+        unsafe {
+            crate::ata::read_sectors(
+                (md.sector + sector_offset) as u32,
+                core::mem::transmute(&buffer),
+                1
+            );
+        }
+
+        buffer[self.ptr % 512]
+    }
+
+    fn read_bytes(&self, count: usize) -> Vec<u8> {
+        let sector_a = self.ptr / 512; // the sector offset of the first byte
+        let sector_b = (self.ptr + count) / 512; // the sector offset of the last byte
+        let sector_count = sector_b - sector_a + 1; // the number of sectors we'll read
+
+        let mut output = vec![0; sector_count * 512];
+        let md = self.get_metadata();
+
+        unsafe {
+            crate::ata::read_sectors(
+                (md.sector + sector_a) as u32,
+                output.as_mut_ptr(),
+                sector_count
+            )
+        }
+
+        // return only the bytes we asked to read, not every sector
+        let offset = self.ptr % 512; // the offset of ptr in its sector
+        output[offset..(offset + count)].to_vec()
+    }
+
+    fn read_all(&self) -> Vec<u8> {
+        let md = self.get_metadata();
+        let mut output = vec![0; md.size * 512];
+        unsafe {
+            crate::ata::read_sectors(
+                md.sector as u32,
+                output.as_mut_ptr(),
+                md.size
+            );
+        }
+        output
+    }
 }
 
 fn read_header() -> Mutex<Header> {

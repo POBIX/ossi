@@ -1,6 +1,7 @@
 use crate::io;
 use crate::io::{Clear, Seek, Write};
 use core::fmt;
+use alloc::vec::Vec;
 use spin::{Lazy, Mutex};
 use volatile::Volatile;
 
@@ -51,6 +52,7 @@ struct Buffer {
     buffer: [Volatile<Char>; VGA_BUFFER_SIZE],
 }
 
+//TODO: refactor this mess
 impl Buffer {
     fn write(&mut self, ptr: &mut usize, byte: u8, color: ColorCode) {
         if *ptr >= VGA_BUFFER_SIZE {
@@ -140,8 +142,11 @@ impl Clear for Console {
 }
 
 impl io::Read for Console {
-    fn read_byte(&self, pos: usize) -> u8 {
-        self.buffer.buffer[pos].read().byte
+    fn read_byte(&self) -> u8 {
+        self.buffer.buffer[self.ptr].read().byte
+    }
+    fn read_all(&self) -> Vec<u8> {
+        self.buffer.buffer.iter().map(|b| b.read().byte).collect()
     }
 }
 

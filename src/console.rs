@@ -22,7 +22,7 @@ fn on_key_down(args: keyboard::KeyArgs) {
                 // if ctrl+backspace, erase until beginning of word
                 while console.get_cursor_position() > 0
                     && !console
-                        .read_char(console.get_cursor_position() - 1)
+                        .read_char()
                         .is_whitespace()
                 {
                     console.backspace();

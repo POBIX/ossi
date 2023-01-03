@@ -1,14 +1,14 @@
 use core::arch::asm;
 
 use alloc::string::{String, FromUtf8Error};
-use alloc::vec::{Vec};
-use alloc::vec;
+use alloc::vec::Vec;
 
-pub trait Write {
+pub trait Write: Seek {
     fn write_byte(&mut self, byte: u8);
     fn write_bytes(&mut self, bytes: &[u8]) {
         for byte in bytes.iter() {
             self.write_byte(*byte);
+            self.seek(self.get_cursor_position() + 1)
         }
     }
     fn write_string(&mut self, str: &str) {
@@ -21,19 +21,20 @@ pub trait Write {
     }
 }
 
-pub trait Read {
-    fn read_byte(&self, pos: usize) -> u8;
-    fn read_bytes(&self, pos: usize, count: usize) -> Vec<u8> {
-        let mut out: Vec<u8> = vec![];
-        for i in 0..count {
-            out.push(self.read_byte(pos + i));
+pub trait Read: Seek {
+    fn read_byte(&self) -> u8;
+    fn read_bytes(&self, count: usize) -> Vec<u8> {
+        let mut out = Vec::<u8>::with_capacity(count);
+        for _ in 0..count {
+            out.push(self.read_byte());
         }
         out
     }
-    fn read_char(&self, pos: usize) -> char { self.read_byte(pos) as char }
-    fn read_string(&self, pos: usize, count: usize) -> Result<String, FromUtf8Error> {
-        String::from_utf8(self.read_bytes(pos, count))
+    fn read_char(&self) -> char { self.read_byte() as char }
+    fn read_string(&self, count: usize) -> Result<String, FromUtf8Error> {
+        String::from_utf8(self.read_bytes(count))
     }
+    fn read_all(&self) -> Vec<u8>;
 }
 
 pub trait Seek {

@@ -6,7 +6,7 @@
 
 extern crate alloc;
 
-use crate::io::Clear;
+use crate::io::{Clear, Read};
 use crate::vga_console::CONSOLE;
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -42,7 +42,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     ata::init();
 
     let file = fs::File::open("/my/nice/file.txt").unwrap();
-    println!("literally what the FUCK dude");
+    println!("{}", file.read_string(571).unwrap());
 
     loop {
         unsafe {
