@@ -6,14 +6,15 @@ use spin::{Lazy, Mutex};
 
 use crate::io;
 
-/// The number of sectors the Header struct takes up.
-/// Maximum number of files = HEADER_SECTORS * 512 / size_of::<FileMetadata>() - 1
+/// The number of sectors the Header struct should take up.
 pub const HEADER_SECTORS: usize = 2;
+/// The maximum possible number of files
 pub const MAX_FILES: usize = HEADER_SECTORS * 512 / size_of::<FileMetadata>();
 
 pub const MAX_PATH_LENGTH: usize = 32;
 
 bitflags::bitflags! {
+    #[derive(Clone, Copy)]
     pub struct FileFlags: u8 {
         const OPENED = 1;
         const DELETED = 2;
