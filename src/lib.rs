@@ -6,7 +6,7 @@
 
 extern crate alloc;
 
-use crate::io::{Clear, Read, Write};
+use crate::io::Clear;
 use crate::vga_console::CONSOLE;
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -23,6 +23,8 @@ pub mod events;
 pub mod console;
 pub mod ata;
 pub mod fs;
+pub mod execution;
+pub mod paging;
 
 #[no_mangle]
 pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
@@ -41,9 +43,15 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     console::init();
     ata::init();
 
-    let mut file = fs::File::open("/my/nice/file.txt").unwrap();
-    file.write_string("this is a nice string that tests whether or not the write function works!");
-    println!("{}", file.read_string(571).unwrap());
+    unsafe {
+        use paging::*;
+        let directory = create_page_directory();
+        let table = create_page_table();
+        directory[0] = addr_flags(table.as_ptr() as u32, PageDirectoryFlags::READ_WRITE | PageDirectoryFlags::PRESENT);
+        paging::enable(directory.as_ptr());
+    }
+
+    println!("Just making sure everything still works :)");
 
     loop {
         unsafe {
