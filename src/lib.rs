@@ -26,32 +26,28 @@ pub mod fs;
 pub mod execution;
 pub mod paging;
 
+
 #[no_mangle]
 pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     grub::verify(magic, info.flags).unwrap();
     unsafe {
         // according to GRUB, there are info.mem_upper free KBs of memory at address 0x100_000.
         // we're using a maximum of a 50MB to get faster loading times.
-        heap::init(0x100_000, core::cmp::min(50 * 1024 * 1024, info.mem_upper));
+        // heap::init(0x100_000, core::cmp::min(50 * 1024 * 1024, info.mem_upper));
     }
 
     CONSOLE.lock().clear();
     pic::remap();
     timer::init();
-    keyboard::init();
+    // keyboard::init();
     interrupts::init();
-    console::init();
+    // console::init();
     ata::init();
 
-    unsafe {
-        use paging::*;
-        let directory = create_page_directory();
-        let table = create_page_table();
-        directory[0] = addr_flags(table.as_ptr() as u32, PageDirectoryFlags::READ_WRITE | PageDirectoryFlags::PRESENT);
-        paging::enable(directory.as_ptr());
-    }
-
+    paging::init();
     println!("Just making sure everything still works :)");
+    let ptr = 0x589 as *mut u32;
+    unsafe { *ptr = 5; } // this should page fault
 
     loop {
         unsafe {

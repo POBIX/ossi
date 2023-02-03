@@ -47,7 +47,7 @@ $(SYMBOLS): $(BOOT_OBJ)
 	@objcopy --only-keep-debug $(TEMP_FILE) $(SYMBOLS)
 	@rm $(TEMP_FILE)
 
-$(BIN_OUTPUT): $(BOOT_OBJ) | $(ISO_DIR)
+$(BIN_OUTPUT): $(BOOT_OBJ) linker.ld | $(ISO_DIR)
 	@$(GCC) $(BOOT_OBJ) $(BIN_LINK_ARGS) -o $(BIN_OUTPUT)
 
 $(ISO_OUTPUT): $(BIN_OUTPUT) | $(ISO_DIR)
