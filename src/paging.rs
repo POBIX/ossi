@@ -58,7 +58,7 @@ pub struct PageDirectory {
 
 pub fn init() {
     unsafe { PLACEMENT_ADDR = &KERNEL_END_ADDR as *const usize as usize; }
-    let mem_end_page: usize = unsafe { &KERNEL_END_ADDR as *const usize as usize };
+    let mem_end_page: usize = unsafe { &KERNEL_END_ADDR as *const usize as usize } + 0x100_000;
     let frames_num = mem_end_page / 0x1000;
     let arr_size = frames_num / 32;
     unsafe {
@@ -79,7 +79,7 @@ pub fn init() {
     // identity map the kernel code 
     // (the virtual address of everything in the kernel should be equal to its physical address)
     unsafe {
-        let mut i = &KERNEL_LOAD_ADDR as *const usize as usize;
+        let mut i = 0;
         // PLACEMENT_ADDR changes inside the loop, so this can't be a for loop
         while i < PLACEMENT_ADDR {
             alloc_frame(get_page(i, true, kernel_dir).unwrap());

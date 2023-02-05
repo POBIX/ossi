@@ -47,7 +47,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
 
     paging::init();
     println!("Just making sure everything still works :)");
-    let ptr = 0x589 as *mut u32;
+    let ptr = 0x100_000_00 as *mut u32;
     unsafe { *ptr = 5; } // this should page fault
 
     loop {

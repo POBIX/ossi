@@ -1,7 +1,7 @@
 ENTRY(_start)
 SECTIONS {
-    /* load sections at 100MB, where there's loads of available memory) */
-    KERNEL_LOAD_ADDR = 100M;
+    /* load sections at 50MB, where there's loads of available memory) */
+    KERNEL_LOAD_ADDR = 50M;
     . = KERNEL_LOAD_ADDR;
 
     .text BLOCK(4K) : ALIGN(4K) {
