@@ -23,5 +23,5 @@ SECTIONS {
     }
 
     /* the address at the end of everything, after all the previous sections were loaded. */
-    KERNEL_END_ADDR = .;
+    KERNEL_END_ADDR = . + 4K;
 }

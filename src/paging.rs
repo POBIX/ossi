@@ -11,9 +11,19 @@ bitfield! {
     accessed, set_accessed: 3;
     dirty, set_dirty: 4;
     unused, _: 5, 11;
-    frame, set_frame: 12, 31;
+    _frame_underlying, _: 12, 31;
 }
-extern "C" { 
+
+impl Page {
+    // we use custom implementations for frame because the default ones crash with overflows.
+    const fn frame(&self) -> u32 { self.0.wrapping_shr(12) }
+    fn set_frame(&mut self, value: u32) {
+        // I stole this from C compiler generated assembly. Can't claim to understand how it works.
+        self.0 = ((value & 0xFFFFF) << 12) | (self.0 & 0xFFF);
+    }
+}
+
+extern "C" {
     static KERNEL_LOAD_ADDR: usize;
     static KERNEL_END_ADDR: usize; // we can safely allocate memory immediately after the end of the kernel
 }
@@ -48,13 +58,14 @@ pub struct PageDirectory {
 
 pub fn init() {
     unsafe { PLACEMENT_ADDR = &KERNEL_END_ADDR as *const usize as usize; }
-    const MEM_END_PAGE: usize = 0x1_000_000;
-    let frames_num = MEM_END_PAGE / 0x1000;
+    let mem_end_page: usize = unsafe { &KERNEL_END_ADDR as *const usize as usize };
+    let frames_num = mem_end_page / 0x1000;
+    let arr_size = frames_num / 32;
     unsafe {
-        // allocate an array with frames_num/32 elements at ptr and zero it
-        let ptr = kmalloc(frames_num / 32, false, 0 as *mut usize);
-        core::ptr::write_bytes(ptr, 0, frames_num / 32);
-        FRAMES_USAGE = slice::from_raw_parts_mut(ptr as *mut u32, frames_num/32);
+        // allocate an array with frames_num/32 (rounded up) elements at ptr and zero it
+        let ptr = kmalloc(arr_size * 4, false, 0 as *mut usize);
+        core::ptr::write_bytes(ptr, 0, arr_size * 4);
+        FRAMES_USAGE = slice::from_raw_parts_mut(ptr as *mut u32, arr_size);
     };
 
     // create a page directory for the kernel
@@ -75,17 +86,17 @@ pub fn init() {
             i += 0x1000;
         }
 
-        switch_page_directory(kernel_dir);
+        switch_page_directory(&kernel_dir.physical_tables);
     }
 }
 
-pub unsafe fn switch_page_directory(new: &PageDirectory) {
+pub unsafe fn switch_page_directory(new: &[u32; 1024]) {
     asm!(
         "mov cr3, eax",
         "mov eax, cr0",
         "or eax, 0x80000000",
         "mov cr0, eax",
-        in("eax") &new.physical_tables,
+        in("eax") new as *const u32 as u32,
         options(nomem, nostack)
     );
 }
@@ -142,13 +153,13 @@ pub fn get_free_frame() -> usize {
         // note: this is performance critical code. .into_iter().enumerate() is about 3 times slower.
         for i in 0..FRAMES_USAGE.len() {
             let frame = FRAMES_USAGE[i];
-            // if every bet in frame is set, we don't need to check each bit individually
+            // if every bit in frame is set, we don't need to check each bit individually
             if frame == 0xFFFFFFFF {
                 continue;
             }
             for j in 0..32 {
                 if frame & (0x1 << j) == 0 {
-                    return j * 32 + i;
+                    return i * 32 + j;
                 }
             }
         }

@@ -1,6 +1,7 @@
 #![feature(abi_x86_interrupt)]
 #![feature(once_cell)]
 #![feature(pointer_byte_offsets)]
+#![feature(int_roundings)]
 #![no_std]
 #![no_main]
 
