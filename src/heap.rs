@@ -2,8 +2,8 @@ use core::mem::size_of;
 
 use alloc::alloc::{GlobalAlloc, Layout};
 
-//TODO: paging, permissions
-
+//TODO: permissions
+use crate::paging::{self, PageFlags};
 /// struct that gets placed in memory every time an allocation occurs,
 /// informing the allocator whether the data can be overridden and
 /// how much of it there is. immediately after the struct comes
@@ -136,6 +136,14 @@ static mut HEAP: Heap = Heap { memory: 0 as *mut u8, size: 0 }; // gets initiali
 
 pub(crate) unsafe fn init(space_start: usize, size: usize) {
     HEAP = Heap { memory: space_start as *mut u8, size };
+
+    paging::map_addresses(
+        paging::default_directory(),
+        space_start,
+        space_start + size,
+        false,
+        PageFlags::RW | PageFlags::USER
+    );
 
     // in order to ensure that the USED flag (in Data) is false (0) for unallocated memory,
     // we zero out our entire heap.

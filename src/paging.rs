@@ -2,7 +2,8 @@ use alloc::slice;
 use bitfield::bitfield;
 use bitflags::bitflags;
 use spin::Mutex;
-use core::{mem::{size_of, transmute}, arch::asm};
+use core::{mem::{size_of, transmute, MaybeUninit}, arch::asm, alloc::Layout};
+use alloc::alloc::alloc;
 
 use crate::println;
 
@@ -44,10 +45,17 @@ extern "C" {
     static KERNEL_LOAD_ADDR: usize;
     static KERNEL_END_ADDR: usize; // we can safely allocate memory immediately after the end of the kernel
 }
-static mut PLACEMENT_ADDR: usize = 0x100_000;
+const HEAP_START: usize = 0x100_000;
+static mut PLACEMENT_ADDR: usize = HEAP_START;
+/// The end of the paging heap. Calculated after init()
+static mut HEAP_END: usize = usize::MAX;
 
 // this exists because the actual allocation functions in heap.rs rely on paging.
 unsafe fn kmalloc(size: usize, align: bool) -> *mut u8 {
+    if PLACEMENT_ADDR > HEAP_END {
+        panic!("Out of paging-reserved memory!");
+    }
+
     if align && PLACEMENT_ADDR & 0xFFFFF000 != 0 {
         // If not already aligned,
         // align it to the nearest page boundary (4K)
@@ -71,10 +79,10 @@ pub struct PageDirectory {
 
 /// Maps every address between from and to to a random virtual address.
 /// If identity is false, no guarantees are made about the virtual address.
-unsafe fn map_addresses(dir: &mut PageDirectory, from: usize, to: &usize, identity: bool, flags: PageFlags) {
+pub unsafe fn map_addresses(dir: &mut PageDirectory, from: usize, to: usize, identity: bool, flags: PageFlags) {
     // this can't be a for because to might change inside
     let mut i = from;
-    while i < *to {
+    while i < to {
         set_page_frame(
             get_page(i, true, dir, flags).unwrap(),
             if identity { i / 0x1000 } else { get_free_frame() }
@@ -83,10 +91,11 @@ unsafe fn map_addresses(dir: &mut PageDirectory, from: usize, to: &usize, identi
     }
 }
 
-pub fn init() {
-    let mem_end_page: usize = unsafe { &KERNEL_END_ADDR as *const usize as usize } + 0x100_000;
+/// Initialises and enables paging. Returns the address at which the heap should begin
+pub fn init() -> usize {
+    let mem_end_page: usize = unsafe { &KERNEL_END_ADDR as *const _ as usize };
     let frames_num = mem_end_page / 0x1000;
-    let arr_size = frames_num / 32;
+    let arr_size = usize::div_ceil(frames_num, 32);
     unsafe {
         // allocate an array with arr_size elements (each 4 bytes) at ptr and zero it
         let ptr = kmalloc(arr_size * 4, false);
@@ -103,13 +112,19 @@ pub fn init() {
     };
 
     unsafe {
+        // The only instances of using kmalloc after this are when allocating a single PageTable.
+        // Theoretically there can only be 1024 of them, so
+        HEAP_END = PLACEMENT_ADDR + size_of::<PageTable>() * 1024;
+    }
+
+    unsafe {
         // We need to identity map the first megabyte (the physical address should equal the virtual address)
         // This is because it is nearly all BIOS and stuff code that relies on being in certain addresses.
         // We also map everything that we `kmalloc`ed, since it comes directly afterwards anyways. (0x100_000..PLACEMENT_ADDR).
         map_addresses(
             kernel_dir,
             0,
-            &PLACEMENT_ADDR,
+            HEAP_END,
             true,
             PageFlags::RW | PageFlags::USER
         );
@@ -119,8 +134,8 @@ pub fn init() {
         map_addresses(
             kernel_dir,
             // the linker puts extern's values in their memory addresses.
-            &KERNEL_LOAD_ADDR as *const usize as usize,
-            &(&KERNEL_END_ADDR as *const usize as usize),
+            &KERNEL_LOAD_ADDR as *const _ as usize,
+            &KERNEL_END_ADDR as *const _ as usize,
             true,
             PageFlags::RW | PageFlags::USER
         );
@@ -128,15 +143,25 @@ pub fn init() {
         // Actually enable paging CPU side
         switch_page_directory(kernel_dir);
     }
+
+    // We've used the beginning of the "proper" heap with kmalloc, and we don't want to override anything.
+    // Returning the first free address is the simplest solution.
+    // We return the first free block (multiple of 4K) and not the first address to avoid double mapping
+    unsafe {
+        let x = HEAP_END + 1;
+        x + 4096 - (x % 4096) + 4096
+    }
 }
 
-pub unsafe fn switch_page_directory(new: &PageDirectory) {
+pub unsafe fn switch_page_directory(new: &'static mut PageDirectory) {
+    let tables_ptr = (&new.physical_tables) as *const _ as u32;
+    CURR_DIR = MaybeUninit::new(new);
     asm!(
         "mov cr3, eax",
         "mov eax, cr0",
         "or eax, 0x80000000",
         "mov cr0, eax",
-        in("eax") &new.physical_tables,
+        in("eax") tables_ptr,
         options(nomem, nostack)
     );
 }
@@ -203,7 +228,9 @@ pub fn get_free_frame() -> usize {
 /// Sets the page's frame to frame
 pub unsafe fn set_page_frame(page: &mut Page, frame: usize) {
     if page.frame() != 0 {
-        panic!("Frame already linked!");
+        let debug = page.frame();
+        let debug2 = debug;
+        panic!("Page's frame already set!");
     }
     set_frame_used(frame, true);
     page.set_present(true);
@@ -216,4 +243,9 @@ pub unsafe fn free_frame(page: &mut Page) {
     }
     set_frame_used(page.frame() as usize, false);
     page.set_frame(0);
+}
+
+static mut CURR_DIR: MaybeUninit<&mut PageDirectory> = MaybeUninit::uninit();
+pub fn default_directory() -> &'static mut PageDirectory {
+    unsafe { CURR_DIR.assume_init_mut() }
 }
