@@ -2,6 +2,7 @@
 #![feature(once_cell)]
 #![feature(pointer_byte_offsets)]
 #![feature(int_roundings)]
+#![feature(const_mut_refs)]
 #![no_std]
 #![no_main]
 
