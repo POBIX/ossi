@@ -1,6 +1,7 @@
+use core::alloc::Layout;
 use core::mem::size_of;
 
-use alloc::vec::Vec;
+use alloc::{vec::Vec, alloc::alloc};
 use alloc::vec;
 use spin::{Lazy, Mutex};
 
@@ -248,15 +249,14 @@ impl io::Write for File {
     }
 }
 
-fn read_header() -> Mutex<Header> {
-    let mut buffer: [u8; HEADER_SECTORS * 512] = [0; HEADER_SECTORS * 512];
-    let header: Header;
+fn read_header() -> Mutex<&'static mut Header> {
     unsafe {
-        crate::ata::read_sectors(0, buffer.as_mut_ptr(), HEADER_SECTORS);
-        header = core::mem::transmute(buffer);
+        let ptr = alloc(Layout::from_size_align_unchecked(HEADER_SECTORS * 512, 1));
+        let header: &mut Header;
+        crate::ata::read_sectors(0, ptr, HEADER_SECTORS);
+        header = core::mem::transmute(ptr);
+        Mutex::new(header)
     }
-
-    Mutex::new(header)
 }
 
 /// writes header to disk.
@@ -268,4 +268,4 @@ fn update_header(header: &Header) {
     }
 }
 
-static HEADER: Lazy<Mutex<Header>> = Lazy::new(read_header);
+static HEADER: Lazy<Mutex<&mut Header>> = Lazy::new(read_header);

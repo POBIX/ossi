@@ -8,8 +8,13 @@
 
 extern crate alloc;
 
-use crate::io::Clear;
+use alloc::alloc::{alloc, dealloc};
+use io::Write;
+use paging::PageFlags;
+
+use crate::io::{Clear, Read};
 use crate::vga_console::CONSOLE;
+use core::alloc::Layout;
 use core::arch::asm;
 use core::panic::PanicInfo;
 
@@ -50,9 +55,15 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     console::init();
     ata::init();
 
-    println!("Just making sure everything still works :)");
-    let ptr = 0x150_0000 as *mut u32;
-    unsafe { *ptr = 5; } // this should page fault
+    let mut file = fs::File::open("/cool.exe").unwrap();
+    // The array is opcodes for [mov ebx, 5; mov eax, ebx; ret]
+    file.write_bytes(&[ 0xBBu8, 0x05, 0x00, 0x00, 0x00, 0x89, 0xD8, 0xC3 ]);
+
+    unsafe {
+        let l = execution::run_program(0, &file.read_bytes(8));
+        println!("{}", l);
+    }
+
 
     loop {
         unsafe {

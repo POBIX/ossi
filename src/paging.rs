@@ -10,18 +10,19 @@ use crate::println;
 bitfield! {
     pub struct Page(u32);
     u32;
-    present, set_present: 0;
-    rw, set_rw: 1;
-    user, set_user: 2;
-    accessed, set_accessed: 3;
-    dirty, set_dirty: 4;
-    unused, _: 5, 11;
+    pub present, set_present: 0;
+    pub rw, set_rw: 1;
+    pub user, set_user: 2;
+    pub accessed, set_accessed: 3;
+    pub dirty, set_dirty: 4;
+    pub unused, _: 5, 11;
     _frame_underlying, _: 12, 31;
 }
 
 bitflags! {
     #[derive(Clone, Copy)]
     pub struct PageFlags : u32 {
+        const NONE = 0;
         const PRESENT = 1;
         const RW = 2;
         const USER = 4;
@@ -168,6 +169,7 @@ pub unsafe fn switch_page_directory(new: &'static mut PageDirectory) {
 
 /// Retrieves a reference to a page structure in the virtual memory.
 /// If make is true, it will allocate a new page table in case the corresponding one is missing.
+/// Flags only applicable if make is true
 pub unsafe fn get_page(address: usize, make: bool, dir: &mut PageDirectory, flags: PageFlags) -> Option<&mut Page> {
     let index = address / 0x1000;
     // find the page table containing this index
