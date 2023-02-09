@@ -2,10 +2,7 @@ use alloc::slice;
 use bitfield::bitfield;
 use bitflags::bitflags;
 use spin::Mutex;
-use core::{mem::{size_of, transmute, MaybeUninit}, arch::asm, alloc::Layout};
-use alloc::alloc::alloc;
-
-use crate::println;
+use core::{mem::{size_of, transmute, MaybeUninit}, arch::asm};
 
 bitfield! {
     pub struct Page(u32);
@@ -127,7 +124,7 @@ pub fn init() -> usize {
             0,
             HEAP_END,
             true,
-            PageFlags::RW | PageFlags::USER
+            PageFlags::RW
         );
 
         // Map the kernel addresses. They also need to be identity mapped since 
@@ -230,8 +227,6 @@ pub fn get_free_frame() -> usize {
 /// Sets the page's frame to frame
 pub unsafe fn set_page_frame(page: &mut Page, frame: usize) {
     if page.frame() != 0 {
-        let debug = page.frame();
-        let debug2 = debug;
         panic!("Page's frame already set!");
     }
     set_frame_used(frame, true);
