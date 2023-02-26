@@ -26,27 +26,49 @@ align 4
 gdt:
   CODE_SEG equ .code - gdt
   DATA_SEG equ .data - gdt
+  USER_CODE_SEG equ .user_code - gdt
+  USER_DATA_SEG equ .user_data - gdt
   .null: ; mandatory null descriptor
     dd 0x0
     dd 0x0
-  .code: ; code segment descriptor
+  .code: ; supervisor mode code segment descriptor
     ; base=0x0, limit=0xFFFFF,
     ; 1st flags: (present)1 (privilege)00 (descriptor type)1 -> 1001b
-    ; type flags: (code)1 (conforming)0 (readable)1 (accessed)0 -> 1010 b
-    ; 2nd flags: (granularity)1 (32-bit default)1 (64-bit seg)0 (AVL)0 -> 1100 b
+    ; type flags: (code)1 (conforming)0 (readable)1 (accessed)0 -> 1010b
+    ; 2nd flags: (granularity)1 (32-bit default)1 (64-bit seg)0 (AVL)0 -> 1100b
     dw 0xFFFF ; Limit (bits 0-15)
     dw 0x0 ; Base (bits 0-15)
     db 0x0 ; Base (bits 16-23)
     db 10011010b ; 1st flags, type flags
     db 11001111b ; 2nd flags, Limit (bits 16-19)
     db 0x0 ; Base (bits 24-31)
-  .data: ; data segment descriptor
+  .data: ; supervisor mode data segment descriptor
     ; Same as code segment except for the type flags:
-    ; type flags: (code)0 (expand down)0 (writable)1 (accessed)0 -> 0010 b
+    ; type flags: (code)0 (expand down)0 (writable)1 (accessed)0 -> 0010b
     dw 0xFFFF ; Limit (bits 0-15)
     dw 0x0 ; Base (bits 0-15)
     db 0x0 ; Base (bits 16-23)
     db 10010010b ; 1st flags, type flags
+    db 11001111b ; 2nd flags, Limit (bits 16-19)
+    db 0x0 ; Base (bits 24-31)
+  .user_code: ; usermode code segment descriptor
+    ; base=0x0, limit=0xFFFFF,
+    ; 1st flags: (present)1 (privilege)11=user (descriptor type)1 -> 1111b
+    ; type flags: (code)1 (conforming)0 (readable)1 (accessed)0 -> 1010b
+    ; 2nd flags: (granularity)1 (32-bit default)1 (64-bit seg)0 (AVL)0 -> 1100b
+    dw 0xFFFF ; Limit (bits 0-15)
+    dw 0x0 ; Base (bits 0-15)
+    db 0x0 ; Base (bits 16-23)
+    db 11111010b ; 1st flags, type flags
+    db 11001111b ; 2nd flags, Limit (bits 16-19)
+    db 0x0 ; Base (bits 24-31)
+  .user_data: ; uesrmode data segment descriptor
+    ; Same as code segment except for the type flags:
+    ; type flags: (code)0 (expand down)0 (writable)1 (accessed)0 -> 0010b
+    dw 0xFFFF ; Limit (bits 0-15)
+    dw 0x0 ; Base (bits 0-15)
+    db 0x0 ; Base (bits 16-23)
+    db 11110010b ; 1st flags, type flags
     db 11001111b ; 2nd flags, Limit (bits 16-19)
     db 0x0 ; Base (bits 24-31)
   gdt_end: ; used to calculate size of GDT descriptor
@@ -94,3 +116,5 @@ new_cs:
     jmp .loop
   .end:
 
+global CODE_SEG
+global DATA_SEG

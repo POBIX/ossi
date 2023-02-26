@@ -3,6 +3,7 @@
 #![feature(pointer_byte_offsets)]
 #![feature(int_roundings)]
 #![feature(const_mut_refs)]
+#![feature(asm_const)]
 #![no_std]
 #![no_main]
 
@@ -29,6 +30,10 @@ pub mod execution;
 pub mod paging;
 mod userspace;
 
+extern "C" {
+    static CODE_SEG: usize;
+    static DATA_SEG: usize;
+}
 
 #[no_mangle]
 pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
@@ -51,11 +56,8 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     console::init();
     ata::init();
 
-    let file = fs::File::open("/cool.exe").unwrap();
-
     unsafe {
-        let l = execution::run_program(0, &file.read_bytes(8));
-        println!("{}", l);
+        println!("{:p} {:p}", &CODE_SEG, &DATA_SEG);
     }
 
     loop {
