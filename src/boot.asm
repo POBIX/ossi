@@ -118,3 +118,5 @@ new_cs:
 
 global CODE_SEG
 global DATA_SEG
+global USER_CODE_SEG
+global USER_DATA_SEG
