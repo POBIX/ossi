@@ -28,6 +28,7 @@ gdt:
   DATA_SEG equ .data - gdt
   USER_CODE_SEG equ .user_code - gdt
   USER_DATA_SEG equ .user_data - gdt
+  GDT_ENTRIES_ADDR equ gdt
   .null: ; mandatory null descriptor
     dd 0x0
     dd 0x0
@@ -120,3 +121,4 @@ global CODE_SEG
 global DATA_SEG
 global USER_CODE_SEG
 global USER_DATA_SEG
+global GDT_ENTRIES_ADDR
