@@ -48,6 +48,8 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
         heap::init(heap_start_addr, core::cmp::min(50 * 1024 * 1024, info.mem_upper));
     }
 
+    userspace::init();
+
     CONSOLE.lock().clear();
     pic::remap();
     timer::init();
@@ -58,6 +60,11 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
 
     unsafe {
         println!("{:p} {:p}", &CODE_SEG, &DATA_SEG);
+    }
+
+    unsafe {
+        userspace::enter();
+        asm!("cli"); // should crash
     }
 
     loop {

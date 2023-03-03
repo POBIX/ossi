@@ -1,7 +1,4 @@
 use core::{mem::size_of, arch::asm};
-
-use bitfield::bitfield;
-
 use crate::{CODE_SEG, DATA_SEG, interrupts};
 
 #[repr(C, packed)]
@@ -11,7 +8,7 @@ struct GdtPtr {
 }
 
 #[repr(C, packed)]
-pub struct GdtEntry {
+struct GdtEntry {
     limit_low: u16,
     base_low: u16,
     base_middle: u8,
@@ -23,13 +20,20 @@ pub struct GdtEntry {
 pub fn init() {
     unsafe {
         let gdt = GdtPtr {
-            limit: 47, // size of a GDT entry * 6 - 1
+            limit: 47, // size of a GDT entry * number of entries - 1
             base: &GDT_ENTRIES_ADDR as *const _ as u32,
         };
         write_tss();
         asm!("lgdt [{gdt_ptr}]", gdt_ptr = in(reg) &gdt);
         tss_flush();
     }
+}
+
+unsafe fn tss_flush() {
+    asm!(
+        "mov ax, 0x2B",
+        "ltr ax",
+    )
 }
 
 /// The Task State Segment allows us to go back into Ring 0 (kernel space) from Ring 3 (user space)
@@ -74,15 +78,15 @@ unsafe fn gdt_set_gate(gdt_entries: *mut GdtEntry, num: usize, base: u32, limit:
     (*gdt_entries.add(num)).limit_low = (limit & 0xFFFF) as u16;
     (*gdt_entries.add(num)).granularity = ((limit >> 16) & 0x0F) as u8;
 
-    (*gdt_entries.add(num)).granularity |= (gran & 0xF0);
+    (*gdt_entries.add(num)).granularity |= gran & 0xF0;
     (*gdt_entries.add(num)).access = access;
 }
 
 unsafe fn write_tss() {
     let base = &TSS_ENTRY as *const _ as u32;
-    let limit = base + size_of::<TssEntry>();
+    let limit = base + size_of::<TssEntry>() as u32;
 
-    gdt_set_gate(&GDT_ENTRIES_ADDR as *mut GdtEntry, 5, base, limit, 0xE9, 0);
+    gdt_set_gate(&GDT_ENTRIES_ADDR as *const u32 as *mut GdtEntry, 5, base, limit, 0xE9, 0);
 
     // Set the segments. | 3 sets the correct RPL bits
     TSS_ENTRY.ss0 = &DATA_SEG as *const _ as u32;
@@ -112,7 +116,7 @@ pub unsafe fn enter() {
     interrupts::disable(); // This is critical code. We can't risk interrupts changing something.
     asm!(
         // switch to the new data segment
-        "mov ax, {ds}",
+        "mov eax, {ds}",
         "mov ds, ax",
         "mov es, ax",
         "mov fs, ax",
