@@ -29,6 +29,7 @@ pub mod fs;
 pub mod execution;
 pub mod paging;
 mod userspace;
+pub mod syscall;
 
 extern "C" {
     static CODE_SEG: usize;
