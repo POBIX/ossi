@@ -1,10 +1,34 @@
 use core::arch::asm;
 
-use crate::interrupts;
+use crate::{interrupts, println};
 
-static SYSCALLS: [fn(); 3] = [||{}; 3];
+// They are only ever used inside the macro. No multithreading
+static mut INDEX: usize = 0;
+static mut SYSCALLS: [usize; 255] = [0; 255]; // an array of function pointers
 
-fn init() {
+macro_rules! decl_syscall {
+    ($name:ident, $func:ident $(, $param:ident : $type:ty)*) => {
+        #[inline(always)]
+        pub fn $name($( $param : $type ),*) -> i32 {
+            unsafe {
+                SYSCALLS[INDEX] = $func as *const () as usize;
+                let a: i32;
+                asm!(
+                    "int 0x80",
+                    lateout("eax") a,
+                    in("eax") INDEX $(, in("ebx") $param as *const _ as *const u32 as u32)*
+                );
+                INDEX += 1;
+                a
+            }
+        }
+    };
+}
+
+fn println_syscall(msg: &str) { println!("{}", msg) }
+decl_syscall!(syscall_print, println_syscall, msg: &str);
+
+pub fn init() {
     unsafe {
         interrupts::IDT[0x80] = interrupts::Handler::new(syscall_handler, interrupts::GateType::DInterrupt);
     }
@@ -47,7 +71,7 @@ extern "x86-interrupt" fn syscall_handler() {
             "push {edx}",
             "push {ecx}",
             "push {ebx}",
-            "call *{location}",
+            "call [{location}]",
             "pop ebx", // we don't really need the values we popped,
             "pop ebx", // we only pop to clear the stack -
             "pop ebx", // we can't know how many arguments a syscall takes
