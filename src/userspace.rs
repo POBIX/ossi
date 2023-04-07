@@ -95,7 +95,6 @@ unsafe fn write_tss() {
 
 extern "C" {
     static USER_CODE_SEG: u32;
-    static USER_DATA_SEG: u32;
     static GDT_ENTRIES_ADDR: u32;
 }
 
@@ -106,15 +105,15 @@ pub unsafe fn enter() {
         "mov ds, ax",
         "mov es, ax",
         "mov fs, ax",
-        "mov ax, 0",
         "mov gs, ax", // sysexit sets SS
         "xor edx, edx", // not necessary; set to 0
-        "mov eax, 0x100008", // SS=0x10+0x10=0x20, CS=0x8+0x10=0x18
+        "mov eax, edi",  
         "mov ecx, 0x174", // MSR specifier: IA32_SYSENTER_CS
         "wrmsr", // set sysexit segments
         "lea edx, 5f", // to be loaded into EIP
         "mov ecx, esp", // to be loaded into ESP
         "sysexit",
         "5:",
+        in("edi") &USER_CODE_SEG as *const _ as i32 - 16 // new CS=edi+16, new SS=edi+24
     );
 }

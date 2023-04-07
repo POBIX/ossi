@@ -5,6 +5,7 @@ use spin::Mutex;
 use core::{mem::{size_of, transmute, MaybeUninit}, arch::asm};
 
 bitfield! {
+    #[derive(Clone, Copy)]
     pub struct Page(u32);
     u32;
     pub present, set_present: 0;
@@ -178,11 +179,22 @@ pub unsafe fn get_page(address: usize, make: bool, dir: &mut PageDirectory, flag
         // allocate a new page table
         let new_table = kmalloc(size_of::<PageTable>(), true) as *mut PageTable;
 
+        let mut page = Page(0);
+        page.set_user(flags.contains(PageFlags::USER));
+        page.set_rw(flags.contains(PageFlags::RW));
+        let page = page;
+
         dir.page_tables[table_idx] = new_table;
-        core::ptr::write_bytes(new_table, 0, 0x1000);
+        for i in 0..(*new_table).pages.len() {
+            (*new_table).pages[i] = page;
+        }
         dir.physical_tables[table_idx] = (new_table as u32 | flags.bits() | PageFlags::PRESENT.bits()) as *const PageTable;
 
-        Some(&mut (*new_table).pages[index % 1024])
+        let page = &mut (*new_table).pages[index % 1024];
+        page.set_present(true);
+        page.set_rw(flags.contains(PageFlags::RW));
+        page.set_user(flags.contains(PageFlags::USER));
+        Some(page)
     } else {
         None
     }

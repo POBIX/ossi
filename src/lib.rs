@@ -42,7 +42,6 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     grub::verify(magic, info.flags).unwrap();
 
     let heap_start_addr = paging::init();
-    // let heap_start_addr = 0x120_000;
 
     unsafe {
         // according to GRUB, there are info.mem_upper free KBs of memory at address 0x100_000.
