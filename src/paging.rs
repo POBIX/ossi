@@ -124,7 +124,7 @@ pub fn init() -> usize {
             0,
             HEAP_END,
             true,
-            PageFlags::RW
+            PageFlags::RW | PageFlags::USER
         );
 
         // Map the kernel addresses. They also need to be identity mapped since 

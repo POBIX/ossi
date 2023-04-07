@@ -1,5 +1,6 @@
 use core::{mem::size_of, arch::asm};
-use crate::{CODE_SEG, DATA_SEG, interrupts};
+use alloc::alloc::{alloc, Layout};
+use crate::{CODE_SEG, DATA_SEG, interrupts, paging, KERNEL_STACK_TOP};
 
 #[repr(C, packed)]
 struct GdtPtr {
@@ -84,25 +85,12 @@ unsafe fn gdt_set_gate(gdt_entries: *mut GdtEntry, num: usize, base: u32, limit:
 
 unsafe fn write_tss() {
     let base = &TSS_ENTRY as *const _ as u32;
-    let limit = base + size_of::<TssEntry>() as u32;
+    let limit = size_of::<TssEntry>() as u32;
 
     gdt_set_gate(&GDT_ENTRIES_ADDR as *const u32 as *mut GdtEntry, 5, base, limit, 0xE9, 0);
 
-    // Set the segments. | 3 sets the correct RPL bits
     TSS_ENTRY.ss0 = &DATA_SEG as *const _ as u32;
-    TSS_ENTRY.esp0 = 0;
-    TSS_ENTRY.cs = &CODE_SEG as *const _ as u32 | 3;
-
-    let tss_segment_selector = &DATA_SEG as *const _ as u32 | 3;
-    TSS_ENTRY.ss = tss_segment_selector;
-    TSS_ENTRY.ds = tss_segment_selector;
-    TSS_ENTRY.es = tss_segment_selector;
-    TSS_ENTRY.fs = tss_segment_selector;
-    TSS_ENTRY.gs = tss_segment_selector;
-}
-
-pub unsafe fn set_kernel_stack(stack: u32) {
-    TSS_ENTRY.esp0 = stack;
+    TSS_ENTRY.esp0 = &KERNEL_STACK_TOP as *const _ as u32;
 }
 
 extern "C" {
@@ -113,29 +101,20 @@ extern "C" {
 
 /// Enters userspace
 pub unsafe fn enter() {
-    interrupts::disable(); // This is critical code. We can't risk interrupts changing something.
     asm!(
-        // switch to the new data segment
-        "mov eax, {ds}",
+        "mov ax, (4 * 8) | 3", // user data segment with RPL 3
         "mov ds, ax",
         "mov es, ax",
         "mov fs, ax",
-        "mov gs, ax",
-        // switch to the new stack
-        "mov eax, esp",
-        "push {ds}",
-        "push eax",
-        // push the flags. we enable interrupts through the or statement
-        "pushf",
-        "pop ax",
-        "or ax, 0x200",
-        "push ax",
-        // push the address of the instruction to return to after switching mode
-        "push {cs}",
-        "push 5f",
-        "iret",
+        "mov ax, 0",
+        "mov gs, ax", // sysexit sets SS
+        "xor edx, edx", // not necessary; set to 0
+        "mov eax, 0x100008", // SS=0x10+0x10=0x20, CS=0x8+0x10=0x18
+        "mov ecx, 0x174", // MSR specifier: IA32_SYSENTER_CS
+        "wrmsr", // set sysexit segments
+        "lea edx, 5f", // to be loaded into EIP
+        "mov ecx, esp", // to be loaded into ESP
+        "sysexit",
         "5:",
-        ds = in(reg) (&USER_DATA_SEG as *const _ as u32) | 0x3, // the or enters ring 3
-        cs = in(reg) (&USER_CODE_SEG as *const _ as u32) | 0x3,
     );
 }

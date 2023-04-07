@@ -1,6 +1,6 @@
 ENTRY(_start)
 SECTIONS {
-    /* load sections at 50MB, where there's loads of available memory) */
+    /* load sections where there's loads of available memory) */
     KERNEL_LOAD_ADDR = 50M;
     . = KERNEL_LOAD_ADDR;
 
@@ -21,6 +21,7 @@ SECTIONS {
         *(COMMON)
         *(.bss)
     }
+    KERNEL_STACK_TOP = .;
 
     /* the address at the end of everything, after all the previous sections were loaded. */
     KERNEL_END_ADDR = . + 4K;

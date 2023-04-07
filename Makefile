@@ -18,7 +18,7 @@ BIN_OUTPUT := $(ISO_DIR)/boot/ossi.bin
 ISO_OUTPUT := $(OBJ_DIR)/ossi.iso
 
 QEMU = qemu-system-i386
-QEMU_ARGS = -cdrom $(ISO_OUTPUT) -drive file=drive.img,format=raw
+QEMU_ARGS = -cdrom $(ISO_OUTPUT) -drive file=drive.img,format=raw -D ./log.txt -d int
 
 GRUB_CFG = grub.cfg
 
