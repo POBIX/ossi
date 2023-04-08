@@ -35,8 +35,8 @@ pub const STATUS_ERR: u8 = 0x01;
 pub fn init() {
     use crate::interrupts::{self, GateType};
     unsafe {
-        interrupts::IDT[pic::IRQ_OFFSET + 14] = interrupts::Handler::new(irq14, GateType::DInterrupt);
-        interrupts::IDT[pic::IRQ_OFFSET + 15] = interrupts::Handler::new(irq15, GateType::DInterrupt);
+        interrupts::IDT[pic::IRQ_OFFSET + 14] = interrupts::Handler::new(irq14, GateType::DInterrupt, 0);
+        interrupts::IDT[pic::IRQ_OFFSET + 15] = interrupts::Handler::new(irq15, GateType::DInterrupt, 0);
     }
     //TODO: query maximum HD size. don't allow going over the sector limit
 }

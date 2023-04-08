@@ -29,7 +29,7 @@ pub mod fs;
 pub mod execution;
 pub mod paging;
 mod userspace;
-// pub mod syscall;
+pub mod syscall;
 
 extern "C" {
     static CODE_SEG: usize;
@@ -50,8 +50,8 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
         heap::init(heap_start_addr, core::cmp::min(50 * 1024 * 1024, info.mem_upper));
     }
 
-    // syscall::init();
     userspace::init();
+    syscall::init();
 
     CONSOLE.lock().clear();
     pic::remap();
@@ -67,15 +67,13 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
 
     unsafe {
         userspace::enter();
-        let debug_var = 0;
-        let debug2 = debug_var + 5;
-        // asm!("cli"); // should crash
+        syscall::execute(0, [452, 0, 0, 0, 0]);
     }
 
     loop {
-        // unsafe {
-        //     asm!("hlt");
-        // }
+        unsafe {
+            asm!("hlt");
+        }
     }
 }
 

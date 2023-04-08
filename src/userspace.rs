@@ -1,6 +1,5 @@
 use core::{mem::size_of, arch::asm};
-use alloc::alloc::{alloc, Layout};
-use crate::{CODE_SEG, DATA_SEG, interrupts, paging, KERNEL_STACK_TOP};
+use crate::{DATA_SEG, KERNEL_STACK_TOP};
 
 #[repr(C, packed)]
 struct GdtPtr {

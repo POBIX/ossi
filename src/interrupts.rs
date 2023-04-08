@@ -42,25 +42,22 @@ type ISR = extern "x86-interrupt" fn();
 type ISRErr = extern "x86-interrupt" fn(u32);
 
 impl Handler {
-    pub fn new_raw(addr: u32, gate_type: GateType) -> Handler {
-        // the code segment should absolutely never change.
-        static CS: Lazy<u16> = Lazy::new(|| cs());
-
+    pub fn new_raw(addr: u32, gate_type: GateType, dpl: u8) -> Handler {
         Handler {
             ptr_low: (addr & 0xFFFF) as u16,
             ptr_high: (addr >> 16) as u16,
-            selector: *CS,
-            attributes: 0x80 + gate_type as u8, // adding 0x80 sets the present bit to 1 and the DPL to 0.
+            selector: cs(),
+            attributes: 0x80 | (dpl << 5) + gate_type as u8, // adding 0x80 sets the present bit to 1.
             _reserved: 0,
         }
     }
 
-    pub fn new(isr: ISR, gate_type: GateType) -> Handler {
-        Handler::new_raw(isr as *const () as u32, gate_type)
+    pub fn new(isr: ISR, gate_type: GateType, dpl: u8) -> Handler {
+        Handler::new_raw(isr as *const () as u32, gate_type, dpl)
     }
 
-    pub fn new_err(isr: ISRErr, gate_type: GateType) -> Handler {
-        Handler::new_raw(isr as *const () as u32, gate_type)
+    pub fn new_err(isr: ISRErr, gate_type: GateType, dpl: u8) -> Handler {
+        Handler::new_raw(isr as *const () as u32, gate_type, dpl)
     }
 
     pub const fn null() -> Handler {
@@ -130,13 +127,13 @@ macro_rules! int_fn_err {
 
 macro_rules! int_set {
     ($idx:literal, $name:tt) => {
-        IDT[$idx] = Handler::new($name, GateType::DInterrupt);
+        IDT[$idx] = Handler::new($name, GateType::DInterrupt, 0);
     };
 }
 
 macro_rules! int_set_err {
     ($idx:literal, $name:tt) => {
-        IDT[$idx] = Handler::new_err($name, GateType::DInterrupt);
+        IDT[$idx] = Handler::new_err($name, GateType::DInterrupt, 0);
     };
 }
 

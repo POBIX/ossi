@@ -253,7 +253,7 @@ pub fn init() {
     unsafe {
         // attach on_key to IRQ1
         interrupts::IDT[pic::IRQ_OFFSET + 1] =
-            interrupts::Handler::new(on_key, GateType::DInterrupt);
+            interrupts::Handler::new(on_key, GateType::DInterrupt, 0);
     }
 
     ON_KEY_UP.lock().subscribe(|args| {
