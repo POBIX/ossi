@@ -67,7 +67,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
 
     unsafe {
         userspace::enter();
-        syscall::execute(0, [452, 0, 0, 0, 0]);
+        syscall::PrintLn::call("lol");
     }
 
     loop {
