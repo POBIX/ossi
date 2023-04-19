@@ -4,6 +4,7 @@
 #![feature(int_roundings)]
 #![feature(const_mut_refs)]
 #![feature(asm_const)]
+#![feature(naked_functions)]
 #![no_std]
 #![no_main]
 
@@ -11,7 +12,6 @@ extern crate alloc;
 
 use crate::io::Clear;
 use crate::vga_console::CONSOLE;
-use core::arch::asm;
 use core::panic::PanicInfo;
 
 pub mod interrupts;
@@ -68,12 +68,11 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     unsafe {
         userspace::enter();
         syscall::PrintLn::call("lol");
+        syscall::DisableInterrupts::call();
     }
 
     loop {
-        unsafe {
-            asm!("hlt");
-        }
+        syscall::Halt::call();
     }
 }
 

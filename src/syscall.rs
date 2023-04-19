@@ -1,82 +1,162 @@
 use core::arch::asm;
-use crate::{interrupts, println};
-
-// The address of the current Syscall.
-// I'd ideally want a Mutex<Option<&dyn Syscall>> but that insists on a
-// static lifetime and using the heap is not an option since no syscalls so
-static mut CURR_CALL: u64 = 0;
-
+use crate::{interrupts, io::Write};
 // No variadic generics :(
-pub trait Syscall: Send {
+pub trait SyscallBase {
     fn call_internal(&self);
 }
 
-pub trait Syscall0: Syscall {}
+pub trait Syscall0: SyscallBase {}
 
-pub trait Syscall1: Syscall {
+pub trait Syscall1: SyscallBase {
     type T1;
 }
 
-pub trait Syscall2: Syscall {
+pub trait Syscall2: SyscallBase {
     type T1;
     type T2;
 }
 
-pub trait Syscall3: Syscall {
+pub trait Syscall3: SyscallBase {
     type T1;
     type T2;
     type T3;
 }
 
-pub trait Syscall4: Syscall {
+pub trait Syscall4: SyscallBase {
     type T1;
     type T2;
     type T3;
     type T4;
 }
 
+#[macro_export]
 macro_rules! decl_syscall {
-    ($name: ident = $func: ident ($arg1n: ident: $arg1t: ty)) => {
+    (_internal $name: ident = $func: path [$($arg_name:ident : $arg_type:ty),*]) => {
         pub struct $name {
-            $arg1n: $arg1t
+            $($arg_name: $arg_type),*
         }
 
-        impl Syscall for $name {
-            fn call_internal(&self) { $func(self.$arg1n) }
-        }
-
-        impl Syscall1 for $name {
-            type T1 = $arg1t;
+        impl SyscallBase for $name {
+            // unsafe in case $func is unsafe.
+            #[allow(unused_unsafe)]
+            fn call_internal(&self) { unsafe { $func($(self.$arg_name),*); } }
         }
 
         impl $name {
-            pub fn call($arg1n: $arg1t) {
+            pub fn call($($arg_name: $arg_type),*) {
                 // this should keep existing until the end of the function (after the syscall)
-                let s = $name { $arg1n };
-                let r = &s as &dyn Syscall;
+                let s = $name { $($arg_name),* };
+                let r = &s as &dyn SyscallBase;
+                let (ptr_low, ptr_high): (u32, u32) = unsafe { core::mem::transmute(r) };
                 unsafe {
-                    CURR_CALL = core::mem::transmute(r);
-                    asm!("int 0x80");
+                    asm!("int 0x80", in("eax") ptr_high, in("ebx") ptr_low);
                 }
             }
         }
     };
-}
 
-decl_syscall!(PrintLn = println_syscall(msg: &'static str));
-
-#[inline(never)]
-fn println_syscall(msg: &str) {
-    println!("{}", msg);
+    ($name: ident = $func: path {}) => {
+        decl_syscall!(_internal $name = $func[]);
+        impl Syscall0 for $name {}
+    };
+    ($name: ident = $func: path {$arg1n: ident: $arg1t: ty}) => {
+        decl_syscall!(_internal $name = $func[$arg1n: $arg1t]);
+        impl Syscall1 for $name {
+            type T1 = $arg1t;
+        }
+    };
+    ($name: ident = $func: path {$arg1n: ident: $arg1t: ty, $arg2n: ident: $arg2t: ty}) => {
+        decl_syscall!(_internal $name = $func[$arg1n: $arg1t, $arg2n: $arg2t]);
+        impl Syscall2 for $name {
+            type T1 = $arg1t;
+            type T2 = $arg2t;
+        }
+    };
+    ($name: ident = $func: path {$arg1n: ident: $arg1t: ty, $arg2n: ident: $arg2t: ty, $arg3n: ident: $arg3t: ty}) => {
+        decl_syscall!(_internal $name = $func[$arg1n: $arg1t, $arg2n: $arg2t, $arg3n: $arg3t]);
+        impl Syscall3 for $name {
+            type T1 = $arg1t;
+            type T2 = $arg2t;
+            type T3 = $arg3t;
+        }
+    };
+    ($name: ident = $func: path {$arg1n: ident: $arg1t: ty, $arg2n: ident: $arg2t: ty, $arg3n: ident: $arg3t: ty, $arg4n: ident: $arg4t: ty}) => {
+        decl_syscall!(_internal $name = $func[$arg1n: $arg1t, $arg2n: $arg2t, $arg3n: $arg3t, $arg4n: $arg4t]);
+        impl Syscall4 for $name {
+            type T1 = $arg1t;
+            type T2 = $arg2t;
+            type T3 = $arg3t;
+            type T4 = $arg4t;
+        }
+    };
 }
 
 pub fn init() {
     unsafe {
-        interrupts::IDT[0x80] = interrupts::Handler::new_raw(syscall_handler as *const () as u32, interrupts::GateType::DInterrupt, 3);
+        interrupts::IDT[0x80] = interrupts::Handler::new_raw(
+            syscall_handler as *const () as u32, interrupts::GateType::DInterrupt, 3
+        );
     }
 }
 
+#[naked]
 extern "x86-interrupt" fn syscall_handler() {
-    let curr: &dyn Syscall = unsafe { core::mem::transmute(CURR_CALL) };
-    (*curr).call_internal();
+    unsafe {
+        asm!(
+            "push ebp",    // Save callee-saved registers
+            "mov ebp, esp",
+            "push esi",
+            "push edi",
+            "push ebx",
+            "push eax",    // Push eax and ebx as arguments for syscall_handler_inner
+            "push ebx",
+            "call syscall_handler_inner",
+            "add esp, 8",  // Pop eax and ebx
+            "pop ebx",     // Restore callee-saved registers
+            "pop edi",
+            "pop esi",
+            "pop ebp",
+            "iret",
+            options(noreturn)
+        )
+    }
 }
+
+// #[naked]
+// extern "x86-interrupt" fn syscall_handler() {
+//     unsafe {
+//         asm!(
+//             // eax and ebx construct a fat pointer - a &dyn SyscallBase.
+//             // We push them as a single argument into a function, thereby transmuting them.
+//             "push eax",
+//             "push ebx",
+//             "call syscall_handler_inner",
+//             "add esp, 8",
+//             "iret",
+//             options(noreturn)
+//         )
+//     }
+// }
+
+#[no_mangle]
+extern "Rust" fn syscall_handler_inner(syscall: &dyn SyscallBase) {
+    syscall.call_internal();
+}
+
+/* Definition of all specific syscalls */
+
+decl_syscall!(PrintLn = println_syscall{msg: &'static str});
+decl_syscall!(DisableInterrupts = crate::interrupts::disable{});
+decl_syscall!(Halt = halt{});
+decl_syscall!(Alloc = alloc{ptr: *mut *mut u8, layout: core::alloc::Layout});
+decl_syscall!(Dealloc = alloc::alloc::dealloc{ptr: *mut u8, layout: core::alloc::Layout});
+
+fn println_syscall(msg: &str) {
+    crate::vga_console::CONSOLE.lock().write_string(msg);
+}
+
+unsafe fn alloc(ptr: *mut *mut u8, layout: core::alloc::Layout) {
+    *ptr = alloc::alloc::alloc(layout);
+}
+
+fn halt() { unsafe { asm!("hlt"); } }
