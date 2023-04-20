@@ -102,10 +102,12 @@ pub fn init() {
 extern "x86-interrupt" fn syscall_handler() {
     unsafe {
         asm!(
+            // We pass the syscall (a fat pointer) as an argument to the inner function,
+            // which simply transmutes the numbers into the syscall object and executes the syscall.
             "push eax",
             "push ebx",
             "call syscall_handler_inner",
-            "add esp, 8"
+            "add esp, 8" // pop eax and ebx
         )
     }
 }
