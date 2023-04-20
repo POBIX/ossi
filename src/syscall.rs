@@ -99,47 +99,19 @@ pub fn init() {
     }
 }
 
-#[naked]
 extern "x86-interrupt" fn syscall_handler() {
     unsafe {
         asm!(
-            "push ebp",    // Save callee-saved registers
-            "mov ebp, esp",
-            "push esi",
-            "push edi",
-            "push ebx",
-            "push eax",    // Push eax and ebx as arguments for syscall_handler_inner
+            "push eax",
             "push ebx",
             "call syscall_handler_inner",
-            "add esp, 8",  // Pop eax and ebx
-            "pop ebx",     // Restore callee-saved registers
-            "pop edi",
-            "pop esi",
-            "pop ebp",
-            "iret",
-            options(noreturn)
+            "add esp, 8"
         )
     }
 }
 
-// #[naked]
-// extern "x86-interrupt" fn syscall_handler() {
-//     unsafe {
-//         asm!(
-//             // eax and ebx construct a fat pointer - a &dyn SyscallBase.
-//             // We push them as a single argument into a function, thereby transmuting them.
-//             "push eax",
-//             "push ebx",
-//             "call syscall_handler_inner",
-//             "add esp, 8",
-//             "iret",
-//             options(noreturn)
-//         )
-//     }
-// }
-
 #[no_mangle]
-extern "Rust" fn syscall_handler_inner(syscall: &dyn SyscallBase) {
+extern "C" fn syscall_handler_inner(syscall: &dyn SyscallBase) {
     syscall.call_internal();
 }
 
@@ -150,6 +122,7 @@ decl_syscall!(DisableInterrupts = crate::interrupts::disable{});
 decl_syscall!(Halt = halt{});
 decl_syscall!(Alloc = alloc{ptr: *mut *mut u8, layout: core::alloc::Layout});
 decl_syscall!(Dealloc = alloc::alloc::dealloc{ptr: *mut u8, layout: core::alloc::Layout});
+decl_syscall!(Empty = empty{});
 
 fn println_syscall(msg: &str) {
     crate::vga_console::CONSOLE.lock().write_string(msg);
@@ -158,5 +131,7 @@ fn println_syscall(msg: &str) {
 unsafe fn alloc(ptr: *mut *mut u8, layout: core::alloc::Layout) {
     *ptr = alloc::alloc::alloc(layout);
 }
+
+fn empty() {}
 
 fn halt() { unsafe { asm!("hlt"); } }
