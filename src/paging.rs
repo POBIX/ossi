@@ -76,15 +76,14 @@ pub struct PageDirectory {
     physical_tables: [*const PageTable; 1024],
 }
 
-/// Maps every address between from and to to a random virtual address.
-/// If identity is false, no guarantees are made about the virtual address.
-pub unsafe fn map_addresses(dir: &mut PageDirectory, from: usize, to: usize, identity: bool, flags: PageFlags) {
+/// Maps every address between phys_from and phys_to to a virtual address, starting at virt_addr.
+pub unsafe fn map_addresses(dir: &mut PageDirectory, phys_from: usize, phys_to: usize, virt_addr: usize, identity: bool, flags: PageFlags) {
     // this can't be a for because to might change inside
-    let mut i = from;
-    while i < to {
+    let mut i = 0;
+    while i < phys_to - phys_from + 0xFFF {
         set_page_frame(
-            get_page(i, true, dir, flags).unwrap(),
-            if identity { i / 0x1000 } else { get_free_frame() }
+            get_page(virt_addr + i, true, dir, flags).unwrap(),
+            if identity { (phys_from + i) / 0x1000 } else { get_free_frame() }
         );
         i += 0x1000;
     }
@@ -124,6 +123,7 @@ pub fn init() -> usize {
             kernel_dir,
             0,
             HEAP_END,
+            0,
             true,
             PageFlags::RW | PageFlags::USER
         );
@@ -135,6 +135,7 @@ pub fn init() -> usize {
             // the linker puts extern's values in their memory addresses.
             &KERNEL_LOAD_ADDR as *const _ as usize,
             &KERNEL_END_ADDR as *const _ as usize,
+            &KERNEL_LOAD_ADDR as *const _ as usize,
             true,
             PageFlags::RW | PageFlags::USER
         );

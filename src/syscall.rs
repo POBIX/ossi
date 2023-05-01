@@ -1,9 +1,8 @@
 use core::arch::asm;
 use crate::{interrupts, io::Write};
+use spin::Lazy;
 // No variadic generics :(
-pub trait SyscallBase {
-    fn call_internal(&self);
-}
+pub trait SyscallBase {}
 
 pub trait Syscall0: SyscallBase {}
 
@@ -36,23 +35,21 @@ macro_rules! decl_syscall {
             $($arg_name: $arg_type),*
         }
 
-        impl SyscallBase for $name {
+        impl $name {
+            pub fn call($($arg_name: $arg_type),*) {
+                // this should keep existing until the end of the function (after the syscall)
+                let s = $name { $($arg_name),* };
+                unsafe {
+                    asm!("int 0x80", in("eax") &s, in("ebx") Syscall::$name as u32);
+                }
+            }
+
             // unsafe in case $func is unsafe.
             #[allow(unused_unsafe)]
             fn call_internal(&self) { unsafe { $func($(self.$arg_name),*); } }
         }
 
-        impl $name {
-            pub fn call($($arg_name: $arg_type),*) {
-                // this should keep existing until the end of the function (after the syscall)
-                let s = $name { $($arg_name),* };
-                let r = &s as &dyn SyscallBase;
-                let (ptr_low, ptr_high): (u32, u32) = unsafe { core::mem::transmute(r) };
-                unsafe {
-                    asm!("int 0x80", in("eax") ptr_high, in("ebx") ptr_low);
-                }
-            }
-        }
+        impl SyscallBase for $name {}
     };
 
     ($name: ident = $func: path {}) => {
@@ -91,6 +88,24 @@ macro_rules! decl_syscall {
     };
 }
 
+macro_rules! decl_syscalls {
+    ( $( $name:ident = $syscall:path { $( $param:ident : $ty:ty ),* } ),* ) => {
+        $(decl_syscall!($name = $syscall { $( $param : $ty ),* });)*
+
+        #[repr(u32)]
+        pub enum Syscall {
+            $( $name, )*
+        }
+
+        #[no_mangle]
+        extern "C" fn syscall_handler_inner(syscall: u32, ty: Syscall) {
+            match ty {
+                $( Syscall::$name => unsafe{core::mem::transmute::<u32, &$name>(syscall)}.call_internal(), )*
+            }
+        }
+    };
+}
+
 pub fn init() {
     unsafe {
         interrupts::IDT[0x80] = interrupts::Handler::new_raw(
@@ -102,29 +117,24 @@ pub fn init() {
 extern "x86-interrupt" fn syscall_handler() {
     unsafe {
         asm!(
-            // We pass the syscall (a fat pointer) as an argument to the inner function,
-            // which simply transmutes the numbers into the syscall object and executes the syscall.
-            "push eax",
             "push ebx",
+            "push eax",
             "call syscall_handler_inner",
-            "add esp, 8" // pop eax and ebx
+            "add esp, 8" // pop the parameters
         )
     }
 }
 
-#[no_mangle]
-extern "C" fn syscall_handler_inner(syscall: &dyn SyscallBase) {
-    syscall.call_internal();
-}
-
 /* Definition of all specific syscalls */
 
-decl_syscall!(PrintLn = println_syscall{msg: &'static str});
-decl_syscall!(DisableInterrupts = crate::interrupts::disable{});
-decl_syscall!(Halt = halt{});
-decl_syscall!(Alloc = alloc{ptr: *mut *mut u8, layout: core::alloc::Layout});
-decl_syscall!(Dealloc = alloc::alloc::dealloc{ptr: *mut u8, layout: core::alloc::Layout});
-decl_syscall!(Empty = empty{});
+decl_syscalls!(
+    PrintLn = println_syscall{msg: &'static str},
+    DisableInterrupts = crate::interrupts::disable{},
+    Halt = halt{},
+    Alloc = alloc{ptr: *mut *mut u8, layout: core::alloc::Layout},
+    Dealloc = alloc::alloc::dealloc{ptr: *mut u8, layout: core::alloc::Layout},
+    Empty = empty{}
+);
 
 fn println_syscall(msg: &str) {
     crate::vga_console::CONSOLE.lock().write_string(msg);

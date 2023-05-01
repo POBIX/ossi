@@ -141,6 +141,7 @@ pub(crate) unsafe fn init(space_start: usize, size: usize) {
         paging::default_directory(),
         space_start,
         space_start + size,
+        0x702_378, // Just a random number. It doesn't matter
         false,
         PageFlags::RW | PageFlags::USER
     );
