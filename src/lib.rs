@@ -5,6 +5,7 @@
 #![feature(const_mut_refs)]
 #![feature(asm_const)]
 #![feature(naked_functions)]
+#![feature(new_uninit)]
 #![no_std]
 #![no_main]
 
@@ -41,23 +42,24 @@ extern "C" {
 pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     grub::verify(magic, info.flags).unwrap();
 
+    pic::remap();
+    timer::init();
+    interrupts::init();
+
     let heap_start_addr = paging::init();
 
     unsafe {
         // according to GRUB, there are info.mem_upper free KBs of memory at address 0x100_000.
-        // we're using a maximum of a 50MB to get faster loading times,
+        // we're using a maximum of 50MB to get faster loading times,
         // and only start at heap_start_addr since some of the heap was used by paging.
-        heap::init(heap_start_addr, core::cmp::min(50 * 1024 * 1024, info.mem_upper));
+        heap::init(heap_start_addr, core::cmp::min(50 * 1024 * 1024, info.mem_upper * 1024));
     }
 
     userspace::init();
     syscall::init();
 
     CONSOLE.lock().clear();
-    pic::remap();
-    timer::init();
     keyboard::init();
-    interrupts::init();
     console::init();
     ata::init();
 

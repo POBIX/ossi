@@ -75,21 +75,39 @@ pub unsafe fn run_program(program: &[u8]) {
     let p_header_arr: *const ElfProgramHeader = unsafe { core::mem::transmute(p_hdr_bytes.as_ptr()) };
     let p_header: &[ElfProgramHeader] = unsafe { core::slice::from_raw_parts(p_header_arr, header.prog_header_len as usize) };
 
+    // Just a random address sometime after the end of the heap and before the kernel (calculated by hand).
+    // TODO: work on an actual heap that isn't hardcoded so this won't be a thing.
+    let mut mem_start = 0x9000000;
+
+    // Create a new page directory for this executable
+    let dir = paging::PageDirectory::new();
+
     // Load each entry in the program header into memory
     for entry in p_header {
-        let mem_start = program.as_ptr().byte_offset(entry.offset as isize) as usize;
-        paging::map_addresses(
-            paging::default_directory(),
+
+        (*dir).map_addresses(
             mem_start,
-            mem_start + entry.file_size as usize, 
+            mem_start + entry.mem_size as usize, 
             entry.virt_addr as usize,
-            false,
             PageFlags::RW | PageFlags::USER
+        );
+
+        mem_start += entry.mem_size as usize;
+
+        // Copy the program into memory
+        core::ptr::copy::<u8>(
+            program.as_ptr().byte_add(entry.offset as usize),
+            entry.virt_addr as *mut u8,
+            entry.file_size as usize
         );
 
         // If mem_size>file_size, ELF dictates we zero out whatever's left
         if entry.mem_size > entry.file_size {
-            //TODO
+            core::ptr::write_bytes(
+                (entry.virt_addr + entry.file_size) as *mut u8,
+                0,
+                (entry.mem_size - entry.file_size) as usize
+            );
         }
     }
 

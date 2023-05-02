@@ -63,7 +63,7 @@ impl Heap {
 
 unsafe impl GlobalAlloc for Heap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        crate::interrupts::disable(); // prevent two simultaneous allocations (TODO: until threads)
+        crate::interrupts::disable(); // prevent two simultaneous allocations
 
         // iterate over our entire heap
         let mut ptr: *mut u8 = self.memory;
@@ -137,12 +137,10 @@ static mut HEAP: Heap = Heap { memory: 0 as *mut u8, size: 0 }; // gets initiali
 pub(crate) unsafe fn init(space_start: usize, size: usize) {
     HEAP = Heap { memory: space_start as *mut u8, size };
 
-    paging::map_addresses(
-        paging::default_directory(),
+    (*paging::PageDirectory::curr()).map_addresses(
         space_start,
         space_start + size,
-        0x702_378, // Just a random number. It doesn't matter
-        false,
+        space_start,
         PageFlags::RW | PageFlags::USER
     );
 
