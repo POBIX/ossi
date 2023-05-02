@@ -77,13 +77,17 @@ pub unsafe fn run_program(program: &[u8]) {
 
     // Just a random address sometime after the end of the heap and before the kernel (calculated by hand).
     // TODO: work on an actual heap that isn't hardcoded so this won't be a thing.
-    let mut mem_start = 0x9000000;
+    let mut mem_start = 0x3000000;
 
     // Create a new page directory for this executable
-    let dir = paging::PageDirectory::new();
+    let dir = paging::PageDirectory::curr();
+    // (*dir).switch_to();
 
     // Load each entry in the program header into memory
     for entry in p_header {
+        if entry.prog_type != 1 {
+            continue;
+        }
 
         (*dir).map_addresses(
             mem_start,
@@ -100,6 +104,25 @@ pub unsafe fn run_program(program: &[u8]) {
             entry.virt_addr as *mut u8,
             entry.file_size as usize
         );
+
+        let why = core::slice::from_raw_parts(entry.virt_addr as *const u8, entry.file_size as usize);
+        let but_why = *(entry.virt_addr as *const u8);
+        let but_why = *((entry.virt_addr+1) as *const u8);
+        let but_why = *((entry.virt_addr+2) as *const u8);
+        let but_why = *((entry.virt_addr+3) as *const u8);
+        let but_why = *((entry.virt_addr+4) as *const u8);
+        let but_why = *((entry.virt_addr+5) as *const u8);
+        let but_why = *((entry.virt_addr+6) as *const u8);
+        let but_why = *((entry.virt_addr+7) as *const u8);
+        let but_why = *((entry.virt_addr+8) as *const u8);
+        let but_why = *((entry.virt_addr+9) as *const u8);
+        let but_why = *((entry.virt_addr+10) as *const u8);
+        let but_why = *((entry.virt_addr+11) as *const u8);
+        let but_why = *((entry.virt_addr+12) as *const u8);
+        let but_why = *((entry.virt_addr+13) as *const u8);
+        let but_why = *((entry.virt_addr+14) as *const u8);
+        let but_why = *((entry.virt_addr+15) as *const u8);
+        let but_why = *((entry.virt_addr+16) as *const u8);
 
         // If mem_size>file_size, ELF dictates we zero out whatever's left
         if entry.mem_size > entry.file_size {

@@ -88,6 +88,7 @@ impl PageDirectory {
         unsafe {
             let dir: *mut Self = Box::into_raw(Box::new_zeroed().assume_init());
             (*dir).frames_usage = Box::into_raw(Box::new_zeroed().assume_init());
+            (*dir).map_kernel();
             dir
         }
     }
@@ -123,8 +124,8 @@ impl PageDirectory {
         let mut i = 0;
         while i < to - from {
             (*self.frames_usage).set_page_frame(
-                self.get_page(from + i, true, flags).unwrap(),
-                (virt_addr + i) / 0x1000
+                self.get_page(virt_addr + i, true, flags).unwrap(),
+                (from + i) / 0x1000
             );
             i += 0x1000;
         }
