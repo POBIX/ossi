@@ -1,8 +1,7 @@
 use core::alloc::Layout;
 use core::mem::size_of;
 
-use alloc::{vec::Vec, alloc::alloc};
-use alloc::vec;
+use alloc::alloc::alloc;
 use spin::{Lazy, Mutex};
 
 use crate::io;
@@ -120,7 +119,7 @@ impl File {
         header.entries[first_null] = FileMetadata {
             path: padded_path,
             sector: addr,
-            size: 1,
+            size: 2269,
             flags: FileFlags::empty()
         };
         header.first_null += 1;
@@ -179,30 +178,18 @@ impl io::Read for File {
         buffer[self.ptr % 512]
     }
 
-    fn read_bytes(&self, count: usize) -> Vec<u8> {
+    fn read_bytes(&self, buffer: &mut [u8]) -> usize {
+        let md = self.get_metadata();
+        let count = usize::max(md.size, buffer.len());
+
         let sector_a = self.ptr / 512; // the sector offset of the first byte
         let sector_b = (self.ptr + count) / 512; // the sector offset of the last byte
         let sector_count = sector_b - sector_a + 1; // the number of sectors we'll read
 
-        let mut output = vec![0; sector_count * 512];
-        let md = self.get_metadata();
-
         unsafe {
-            crate::ata::read_sectors((md.sector + sector_a) as u32, output.as_mut_ptr(), sector_count);
+            crate::ata::read_sectors((md.sector + sector_a) as u32, buffer.as_mut_ptr(), sector_count);
         }
-
-        // return only the bytes we asked to read, not every sector
-        let offset = self.ptr % 512; // the offset of ptr in its sector
-        output[offset..(offset + count)].to_vec()
-    }
-
-    fn read_all(&self) -> Vec<u8> {
-        let md = self.get_metadata();
-        let mut output = vec![0; md.size * 512];
-        unsafe {
-            crate::ata::read_sectors(md.sector as u32, output.as_mut_ptr(), md.size);
-        }
-        output
+        count
     }
 }
 
@@ -231,27 +218,23 @@ impl io::Write for File {
         let sector_b = (self.ptr + bytes.len()) / 512; // the last byte's sector
         let sector_count = sector_b - sector_a + 1;
 
-        // in order to not overwrite everything we're not writing, read first
-        let mut buffer = vec![0; sector_count * 512];
-        let md = self.get_metadata();
-        unsafe {
-            crate::ata::read_sectors((md.sector + sector_a) as u32, buffer.as_mut_ptr(), sector_count);
+        // In case ptr currently points at the middle of a sector, we want to not override everything before it,
+        // so we read the final sector
+        if self.ptr % 512 != 0 {
+            //TODO
         }
-
-        // set the data
-        let ptr_offset = self.ptr % 512;
-        buffer[ptr_offset..(ptr_offset + bytes.len())].copy_from_slice(bytes);
+        let md = self.get_metadata();
 
         // update the sectors on disk
         unsafe {
-            crate::ata::write_sectors((md.sector + sector_a) as u32, buffer.as_ptr(), sector_count);
+            crate::ata::write_sectors((md.sector + sector_a) as u32, bytes.as_ptr(), sector_count);
         }
     }
 }
 
 fn read_header() -> Mutex<&'static mut Header> {
     unsafe {
-        let ptr = alloc(Layout::from_size_align_unchecked(HEADER_SECTORS * 512, 1));
+        let ptr = alloc(Layout::from_size_align_unchecked(HEADER_SECTORS * 512, 4));
         let header: &mut Header;
         crate::ata::read_sectors(0, ptr, HEADER_SECTORS);
         header = core::mem::transmute(ptr);

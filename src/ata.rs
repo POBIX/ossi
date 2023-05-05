@@ -81,43 +81,68 @@ fn panic_if_error() {
 
 /// reads the first sector_count sectors from the hard disk, at address lba, into buffer.
 pub unsafe fn read_sectors(lba: u32, buffer: *mut u8, sector_count: usize) {
-    wait_for(STATUS_BSY, false);
+    // We can only read 255 sectors a time
+    let reads_count = sector_count / 255 + 1;
 
-    setup_flags(lba, sector_count as u8);
-    io::outb(PORT_CR, 0x20); // send the read command
-    panic_if_error();
-
-    // the disk sends out 16 bytes at a time.
-    let buffer_u16 = buffer as *mut u16;
+    // The disk sends out 16 bytes at a time.
+    let mut ptr = buffer as *mut u16;
     const SECTOR_SIZE: usize = 512 / 2; // the sector size in our new unit (u16)
+    let mut sectors_read = 0;
 
-    for i in 0..sector_count {
+    for i in 0..reads_count {
         wait_for(STATUS_BSY, false);
-        wait_for(STATUS_DRQ, true);
-        for j in 0..SECTOR_SIZE {
-            *buffer_u16.offset((SECTOR_SIZE*i + j) as isize) = io::inw(PORT_DR);
+
+        // Either the maximum number of sectors or however many are left
+        let batch_size = usize::min(sector_count - 255*i, 255);
+
+        setup_flags(lba + sectors_read, batch_size as u8);
+        io::outb(PORT_CR, 0x20); // send the read command
+        panic_if_error();
+
+        for _ in 0..batch_size {
+            // We have to wait for the disk after every sector
+            wait_for(STATUS_BSY, false);
+            wait_for(STATUS_DRQ, true);
+            for _ in 0..SECTOR_SIZE {
+                *ptr = io::inw(PORT_DR);
+                ptr = ptr.offset(1);
+            }
         }
+
+        sectors_read += batch_size as u32;
     }
 }
 
 /// writes the first sector_count sectors of data to the disk, at address lba.
 pub unsafe fn write_sectors(lba: u32, data: *const u8, sector_count: usize) {
-    wait_for(STATUS_BSY, false);
-
-    setup_flags(lba, sector_count as u8);
-    io::outb(PORT_CR, 0x30); // send the write command
-    panic_if_error();
+    // We can only write 255 sectors at a time
+    let writes_count = sector_count / 255 + 1;
 
     // the disk receives 32 bytes at a time.
-    let data_u32 = data as *const u32;
+    let mut ptr = data as *const u32;
     const SECTOR_SIZE: usize = 512 / 4; // the sector size in our new unit (u32)
+    let mut sectors_written = 0;
 
-    for i in 0..sector_count {
+
+    for i in 0..writes_count {
         wait_for(STATUS_BSY, false);
-        wait_for(STATUS_DRQ, true);
-        for j in 0..SECTOR_SIZE {
-            let block = *data_u32.offset((SECTOR_SIZE*i + j) as isize);
-            io::outl(PORT_DR, block);
+
+        // Either the maximum number of sectors or however many are left
+        let batch_size = usize::min(sector_count - 255*i, 255);
+
+        setup_flags(lba + sectors_written, batch_size as u8);
+        io::outb(PORT_CR, 0x30); // send the write command
+        panic_if_error();
+
+        for _ in 0..batch_size {
+            wait_for(STATUS_BSY, false);
+            wait_for(STATUS_DRQ, true);
+            for _ in 0..SECTOR_SIZE {
+                io::outl(PORT_DR, *ptr);
+                ptr = ptr.offset(1);
+            }
         }
+        sectors_written += batch_size as u32;
+        crate::println!("{}% done", (i as f32/writes_count as f32)*100.0);
     }
 }

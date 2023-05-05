@@ -32,7 +32,7 @@ impl Heap {
 
     /// reallocates previously deallocated memory and creates a new unused block in the remaining space
     unsafe fn alloc_chunk(&self, ptr: *mut u8, size: usize) -> *mut u8 {
-        let mut data = ptr as *mut Data;
+        let data = ptr as *mut Data;
 
         let remaining_space = size - (*data).size;
 

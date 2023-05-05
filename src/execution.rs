@@ -44,20 +44,6 @@ struct ElfProgramHeader {
     align: u32
 }
 
-#[repr(C)]
-struct ElfSectionHeader {
-    name: u32,
-    section_type: u32,
-    flags: u32,
-    addr: u32,
-    offset: u32,
-    size: u32,
-    link: u32,
-    info: u32,
-    addr_align: u32,
-    entry_size: u32,
-}
-
 pub unsafe fn run_program(program: &[u8]) {
     let header_bytes = &program[..core::mem::size_of::<ElfHeader>()];
     let header: &ElfHeader = unsafe { core::mem::transmute(header_bytes.as_ptr()) };
@@ -104,25 +90,6 @@ pub unsafe fn run_program(program: &[u8]) {
             entry.virt_addr as *mut u8,
             entry.file_size as usize
         );
-
-        let why = core::slice::from_raw_parts(entry.virt_addr as *const u8, entry.file_size as usize);
-        let but_why = *(entry.virt_addr as *const u8);
-        let but_why = *((entry.virt_addr+1) as *const u8);
-        let but_why = *((entry.virt_addr+2) as *const u8);
-        let but_why = *((entry.virt_addr+3) as *const u8);
-        let but_why = *((entry.virt_addr+4) as *const u8);
-        let but_why = *((entry.virt_addr+5) as *const u8);
-        let but_why = *((entry.virt_addr+6) as *const u8);
-        let but_why = *((entry.virt_addr+7) as *const u8);
-        let but_why = *((entry.virt_addr+8) as *const u8);
-        let but_why = *((entry.virt_addr+9) as *const u8);
-        let but_why = *((entry.virt_addr+10) as *const u8);
-        let but_why = *((entry.virt_addr+11) as *const u8);
-        let but_why = *((entry.virt_addr+12) as *const u8);
-        let but_why = *((entry.virt_addr+13) as *const u8);
-        let but_why = *((entry.virt_addr+14) as *const u8);
-        let but_why = *((entry.virt_addr+15) as *const u8);
-        let but_why = *((entry.virt_addr+16) as *const u8);
 
         // If mem_size>file_size, ELF dictates we zero out whatever's left
         if entry.mem_size > entry.file_size {

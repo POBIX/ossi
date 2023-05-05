@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use bitfield::bitfield;
 use bitflags::bitflags;
-use core::{mem::{size_of, transmute, MaybeUninit}, arch::asm};
+use core::{mem::{size_of, transmute}, arch::asm};
 
 bitfield! {
     #[derive(Clone, Copy)]

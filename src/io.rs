@@ -1,7 +1,6 @@
-use core::arch::asm;
+use core::{arch::asm, str::Utf8Error};
 
-use alloc::string::{String, FromUtf8Error};
-use alloc::vec::Vec;
+use alloc::string::String;
 
 pub trait Write: Seek {
     fn write_byte(&mut self, byte: u8);
@@ -18,18 +17,26 @@ pub trait Write: Seek {
 
 pub trait Read: Seek {
     fn read_byte(&self) -> u8;
-    fn read_bytes(&self, count: usize) -> Vec<u8> {
-        let mut out = Vec::<u8>::with_capacity(count);
-        for _ in 0..count {
-            out.push(self.read_byte());
+    fn read_bytes(&self, buffer: &mut [u8]) -> usize {
+        for byte in &mut *buffer {
+            *byte = self.read_byte();
         }
-        out
+        buffer.len()
     }
     fn read_char(&self) -> char { self.read_byte() as char }
-    fn read_string(&self, count: usize) -> Result<String, FromUtf8Error> {
-        String::from_utf8(self.read_bytes(count))
+    fn read_string(&self, buffer: &mut String) -> Result<usize, Utf8Error> {
+        unsafe {
+            // Load the string into the buffer
+            self.read_bytes(buffer.as_bytes_mut());
+        };
+        // Check if the string is valid utf8
+        let res = core::str::from_utf8(buffer.as_bytes());
+        if res.is_err() {
+            Err(res.unwrap_err())
+        } else {
+            Ok(buffer.len())
+        }
     }
-    fn read_all(&self) -> Vec<u8>;
 }
 
 pub trait Seek {

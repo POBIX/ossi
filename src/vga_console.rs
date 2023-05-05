@@ -1,7 +1,6 @@
 use crate::io;
 use crate::io::{Clear, Seek, Write};
 use core::fmt;
-use alloc::vec::Vec;
 use spin::{Lazy, Mutex};
 use volatile::Volatile;
 
@@ -144,9 +143,6 @@ impl Clear for Console {
 impl io::Read for Console {
     fn read_byte(&self) -> u8 {
         self.buffer.buffer[self.ptr].read().byte
-    }
-    fn read_all(&self) -> Vec<u8> {
-        self.buffer.buffer.iter().map(|b| b.read().byte).collect()
     }
 }
 

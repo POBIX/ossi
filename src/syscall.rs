@@ -1,6 +1,5 @@
 use core::arch::asm;
 use crate::{interrupts, io::Write};
-use spin::Lazy;
 // No variadic generics :(
 pub trait SyscallBase {}
 
@@ -117,10 +116,12 @@ pub fn init() {
 extern "x86-interrupt" fn syscall_handler() {
     unsafe {
         asm!(
+            "cli",
             "push ebx",
             "push eax",
             "call syscall_handler_inner",
-            "add esp, 8" // pop the parameters
+            "add esp, 8", // pop the parameters
+            "sti"
         )
     }
 }
@@ -130,14 +131,23 @@ extern "x86-interrupt" fn syscall_handler() {
 decl_syscalls!(
     PrintLn = println_syscall{msg: &'static str},
     DisableInterrupts = crate::interrupts::disable{},
+    EnableInterrupts = crate::interrupts::enable{},
+    AreInterruptsEnabled = are_interrupts_enabled{value: *mut bool},
     Halt = halt{},
     Alloc = alloc{ptr: *mut *mut u8, layout: core::alloc::Layout},
     Dealloc = alloc::alloc::dealloc{ptr: *mut u8, layout: core::alloc::Layout},
-    Empty = empty{}
+    Empty = empty{},
+    Outb = crate::io::outb{port: u16, value: u8},
+    Outw = crate::io::outw{port: u16, value: u16},
+    Outl = crate::io::outl{port: u16, value: u32}
 );
 
 fn println_syscall(msg: &str) {
     crate::vga_console::CONSOLE.lock().write_string(msg);
+}
+
+fn are_interrupts_enabled(value: *mut bool) {
+    unsafe { *value = crate::interrupts::is_enabled() };
 }
 
 unsafe fn alloc(ptr: *mut *mut u8, layout: core::alloc::Layout) {
