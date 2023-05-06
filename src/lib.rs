@@ -69,9 +69,9 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
 
     let file = fs::File::open("/home/program").unwrap();
     unsafe {
-        const PROG_SIZE: usize = 1171968;
-        let buffer_ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(PROG_SIZE, 4));
-        let buffer = core::slice::from_raw_parts_mut(buffer_ptr, PROG_SIZE);
+        let prog_size = file.get_metadata().size * 512;
+        let buffer_ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(prog_size, 4));
+        let buffer = core::slice::from_raw_parts_mut(buffer_ptr, prog_size);
         file.read_bytes(buffer);
         execution::run_program(&buffer);
     }

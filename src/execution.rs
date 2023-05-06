@@ -4,12 +4,18 @@ use crate::paging::{PageFlags, self};
 
 /// Runs the compiled code in program, starting at main_offset,
 /// and returns the error code returned by the program in EAX.
-unsafe fn enter_loaded_program(entry_point: u32) -> u32 {
+unsafe fn enter_loaded_program(entry_point: u32, new_esp: usize) -> u32 {
     let mut ret_val: u32;
     asm!(
+        "mov edx, esp",
+        "mov esp, {new_esp}",
+        "push edx",
         "call {fn_ptr}",
+        "pop esp",
         fn_ptr = in(reg) entry_point,
-        out("eax") ret_val
+        out("eax") ret_val,
+        new_esp = in(reg) new_esp,
+        out("edx") _, // clobber
     );
     ret_val
 }
@@ -82,7 +88,7 @@ pub unsafe fn run_program(program: &[u8]) {
             PageFlags::RW | PageFlags::USER
         );
 
-        mem_start += entry.mem_size as usize;
+        mem_start += (entry.mem_size as usize / 0x1000 + 1) * 0x1000;
 
         // Copy the program into memory
         core::ptr::copy::<u8>(
@@ -101,8 +107,17 @@ pub unsafe fn run_program(program: &[u8]) {
         }
     }
 
-    unsafe { 
+    // Map the program's new stack
+    (*dir).map_addresses(mem_start, mem_start + 0x1000, mem_start, PageFlags::USER | PageFlags::RW);
+    let stack_end = mem_start + 0x1000;
+    for i in (mem_start..stack_end).step_by(4) {
+        let ptr = i as *mut u32;
+        unsafe { *ptr = 0xDEADBEEF };
+    }
+
+    unsafe {
         crate::userspace::enter();
-        enter_loaded_program(header.entry)
+        let aligned_stack_top = (mem_start + 0x1000 - 4) & !0xF;
+        enter_loaded_program(header.entry, aligned_stack_top);
     };
 }
