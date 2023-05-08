@@ -1,5 +1,5 @@
 use crate::interrupts::GateType;
-use crate::{interrupts, pic};
+use crate::{interrupts, pic, println};
 use alloc::boxed::Box;
 use spin::Mutex;
 use crate::events::{Event, EventHandler};
@@ -29,14 +29,13 @@ extern "x86-interrupt" fn on_tick() {
     unsafe {
         asm!(
             "mov [edi], esp", // undo push
-            "mov eax, end_of_on_tick",
+            "lea eax, end_of_on_tick",
             "mov [edi+4], eax",
             in("edi") context_ptr,
         );
     }
 
-    pic::send_eoi(0);
-    crate::process::next_program(context_ptr); // jumps out of this function
+    crate::process::next_program(context_ptr, || pic::send_eoi(0)); // jumps out of this function
 
     unsafe {
         asm!(

@@ -78,6 +78,8 @@ struct ElfProgramHeader {
 static mut MEM_START: usize = 0x4_400_000;
 
 pub unsafe fn run_program(program: &[u8]) {
+    crate::interrupts::disable();
+
     let header_bytes = &program[..core::mem::size_of::<ElfHeader>()];
     let header: &ElfHeader = unsafe { core::mem::transmute(header_bytes.as_ptr()) };
 
@@ -143,4 +145,6 @@ pub unsafe fn run_program(program: &[u8]) {
         let aligned_stack_top = (MEM_START + STACK_SIZE - 4) & !0xF;
         enter_loaded_program(header.entry, aligned_stack_top as u32);
     };
+
+    crate::interrupts::enable();
 }

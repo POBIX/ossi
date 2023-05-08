@@ -61,6 +61,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     userspace::init();
     syscall::init();
 
+
     CONSOLE.lock().clear();
     keyboard::init();
     console::init();

@@ -21,9 +21,10 @@ static CURR_INDEX: Mutex<usize> = Mutex::new(0);
 
 /// Should only ever be invoked via syscall by the task scheduler.
 /// Switches from the current program to the next one, while updating the context of the current one
-pub(crate) fn next_program(new_context: *const Context) {
+/// after: this function will get executed right before the jump to the next program
+pub(crate) fn next_program(new_context: *const Context, after: fn()) {
     let mut processes = PROCESSES.lock();
-    if processes.len() == 0 { return; }
+    if processes.len() == 0 { after(); return; }
     let mut curr_index = CURR_INDEX.lock();
 
     // Assign our context to the previous index
@@ -31,13 +32,15 @@ pub(crate) fn next_program(new_context: *const Context) {
     unsafe { Box::from_raw(processes[replace].0 as *mut Context) }; // free previous context
     processes[replace] = ContextPtr(new_context);
 
-    let prog_index = *curr_index; // The index before incrementing
+    let new_process = &processes[*curr_index];
+
     if *curr_index < processes.len() {
         *curr_index += 1;
     } else {
         *curr_index = 0;
     }
 
+    after();
     unsafe {
         asm!(
             // Restore stack
@@ -45,13 +48,15 @@ pub(crate) fn next_program(new_context: *const Context) {
             // Restore eip
             "push [edi+4]", // Push eip
             "ret", // jmp to the pushed eip
-            in("edi") processes[prog_index].0
-        )
+            in("edi") new_process.0
+        );
     }
 }
 
 pub fn register(esp: u32, eip: u32) {
-    let mut processes = PROCESSES.lock();
     let context = Box::new(Context { esp, eip });
-    processes.push(ContextPtr(Box::into_raw(context)));
+    let ptr = Box::into_raw(context);
+    PROCESSES.lock().push(ContextPtr(ptr));
+    crate::interrupts::disable();
+    next_program(ptr, crate::interrupts::enable);
 }
