@@ -1,7 +1,9 @@
 use crate::interrupts::GateType;
 use crate::{interrupts, pic};
+use alloc::boxed::Box;
 use spin::Mutex;
 use crate::events::{Event, EventHandler};
+use core::arch::asm;
 
 pub fn init() {
     unsafe {
@@ -11,10 +13,37 @@ pub fn init() {
     }
 }
 
+#[allow(named_asm_labels)]
 extern "x86-interrupt" fn on_tick() {
     unsafe { TIMER += 1; }
     ON_TICK.lock().invoke(());
+
+    // If we haven't yet initialised the heap, don't run the task scheduler code
+    if !crate::heap::has_init() {
+        pic::send_eoi(0);
+        return;
+    }
+
+    let context = Box::new(crate::process::Context { esp: 0, eip: 0 });
+    let context_ptr = Box::into_raw(context);
+    unsafe {
+        asm!(
+            "mov [edi], esp", // undo push
+            "mov eax, end_of_on_tick",
+            "mov [edi+4], eax",
+            in("edi") context_ptr,
+        );
+    }
+
     pic::send_eoi(0);
+    crate::process::next_program(context_ptr); // jumps out of this function
+
+    unsafe {
+        asm!(
+            ".global end_of_on_tick",
+            "end_of_on_tick:"
+        )
+    }
 }
 
 #[inline]

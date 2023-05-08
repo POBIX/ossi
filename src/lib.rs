@@ -10,6 +10,8 @@
 
 extern crate alloc;
 
+use alloc::alloc::dealloc;
+
 use crate::io::{Read, Clear};
 use crate::vga_console::CONSOLE;
 use core::alloc::Layout;
@@ -31,6 +33,7 @@ pub mod execution;
 pub mod paging;
 mod userspace;
 pub mod syscall;
+pub mod process;
 
 extern "C" {
     static CODE_SEG: usize;
@@ -50,9 +53,9 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
 
     unsafe {
         // according to GRUB, there are info.mem_upper free KBs of memory at address 0x100_000.
-        // we're using a maximum of 5MB to get faster loading times,
+        // we're using a maximum of 10MB to get faster loading times,
         // and only start at heap_start_addr since some of the heap was used by paging.
-        heap::init(heap_start_addr, core::cmp::min(5 * 1024 * 1024, info.mem_upper * 1024));
+        heap::init(heap_start_addr, core::cmp::min(50 * 1024 * 1024, info.mem_upper * 1024));
     }
 
     userspace::init();
@@ -67,17 +70,31 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
         println!("{:p} {:p}", &CODE_SEG, &DATA_SEG);
     }
 
-    let file = fs::File::open("/home/program").unwrap();
-    unsafe {
-        let prog_size = file.get_metadata().size * 512;
-        let buffer_ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(prog_size, 4));
-        let buffer = core::slice::from_raw_parts_mut(buffer_ptr, prog_size);
-        file.read_bytes(buffer);
-        execution::run_program(&buffer);
+    macro_rules! heap_slice {
+        ($size: expr, $align: expr) => {{
+            let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked($size, $align));
+            core::slice::from_raw_parts_mut(ptr, $size)
+        }}
     }
 
+    let proga = fs::File::open("proga").unwrap();
+    unsafe {
+        let buffer = heap_slice!(proga.get_metadata().size * 512, 4);
+        proga.read_bytes(buffer);
+        execution::run_program(&buffer);
+        // dealloc(buffer.as_mut_ptr(), Layout::new::<u8>());
+    }
+
+    // let progb = fs::File::open("progb").unwrap();
+    // unsafe {
+    //     let buffer = heap_slice!(progb.get_metadata().size * 512, 4);
+    //     progb.read_bytes(buffer);
+    //     execution::run_program(&buffer);
+    //     dealloc(buffer.as_mut_ptr(), Layout::new::<u8>());
+    // }
+
     loop {
-        syscall::Halt::call();
+        // syscall::Halt::call();
     }
 }
 

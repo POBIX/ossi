@@ -1,7 +1,7 @@
-use alloc::boxed::Box;
+use alloc::{boxed::Box, alloc::alloc};
 use bitfield::bitfield;
 use bitflags::bitflags;
-use core::{mem::{size_of, transmute}, arch::asm};
+use core::{mem::{size_of, transmute}, arch::asm, alloc::Layout};
 
 bitfield! {
     #[derive(Clone, Copy)]
@@ -143,7 +143,12 @@ impl PageDirectory {
             Some(&mut (*table).pages[index % 1024])
         } else if make {
             // allocate a new page table
-            let new_table = kmalloc(size_of::<PageTable>(), true) as *mut PageTable;
+            let new_table = if crate::heap::has_init() {
+                // allocate via heap.rs if it's ready
+                alloc(Layout::from_size_align_unchecked(size_of::<PageTable>(), 4096))
+            } else {
+                kmalloc(size_of::<PageTable>(), true)
+            } as *mut PageTable;
 
             let mut page = Page(0);
             page.set_user(flags.contains(PageFlags::USER));

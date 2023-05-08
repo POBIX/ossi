@@ -4,20 +4,43 @@ use crate::paging::{PageFlags, self};
 
 /// Runs the compiled code in program, starting at main_offset,
 /// and returns the error code returned by the program in EAX.
-unsafe fn enter_loaded_program(entry_point: u32, new_esp: usize) -> u32 {
-    let mut ret_val: u32;
+#[allow(named_asm_labels)]
+#[allow(unreachable_code)]
+unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32) {
+    // push the previous stack onto the new one (for recovery after the program's execution)
     asm!(
-        "mov edx, esp",
-        "mov esp, {new_esp}",
-        "push edx",
+        "mov [{new_esp}], esp",
+        new_esp = in(reg) new_esp - 4 // - 4 since push subtracts 4 from esp
+    );
+
+    // Load start_of_program_execution into the task scheduler with our entry point -
+    // as soon as it's time to start executing our program, it'll call it
+
+    // First we push the entry point (start_of_program_execution's parameter) to our new stack
+    asm!(
+        "mov [{new_esp}], {entry_point}",
+        new_esp = in(reg) new_esp - 8, // - 8 to account for the pushed stack and the new value
+        entry_point = in(reg) entry_point
+    );
+
+    // Then we pretend that start_of_program_execution is the middle of an already running program,
+    // meaning the task scheduler will call it and set esp to the new stack.
+    crate::process::register(
+        new_esp-8, // new_esp-8 to account for the pushed values
+        &start_of_program_execution as *const _ as u32
+    ); 
+}
+
+unsafe fn start_of_program_execution(entry_point: u32) {
+    crate::userspace::enter();
+
+    let ret_val: u32;
+    asm!(
         "call {fn_ptr}",
         "pop esp",
         fn_ptr = in(reg) entry_point,
         out("eax") ret_val,
-        new_esp = in(reg) new_esp,
-        out("edx") _, // clobber
     );
-    ret_val
 }
 
 #[repr(C)]
@@ -50,6 +73,10 @@ struct ElfProgramHeader {
     align: u32
 }
 
+// Just a random address sometime after the end of the heap and before the kernel (calculated by hand).
+// TODO: work on an actual heap that isn't hardcoded so this won't be a thing.
+static mut MEM_START: usize = 0x4_400_000;
+
 pub unsafe fn run_program(program: &[u8]) {
     let header_bytes = &program[..core::mem::size_of::<ElfHeader>()];
     let header: &ElfHeader = unsafe { core::mem::transmute(header_bytes.as_ptr()) };
@@ -67,10 +94,6 @@ pub unsafe fn run_program(program: &[u8]) {
     let p_header_arr: *const ElfProgramHeader = unsafe { core::mem::transmute(p_hdr_bytes.as_ptr()) };
     let p_header: &[ElfProgramHeader] = unsafe { core::slice::from_raw_parts(p_header_arr, header.prog_header_len as usize) };
 
-    // Just a random address sometime after the end of the heap and before the kernel (calculated by hand).
-    // TODO: work on an actual heap that isn't hardcoded so this won't be a thing.
-    let mut mem_start = 0x3000000;
-
     // Create a new page directory for this executable
     let dir = paging::PageDirectory::curr();
     // (*dir).switch_to();
@@ -82,13 +105,13 @@ pub unsafe fn run_program(program: &[u8]) {
         }
 
         (*dir).map_addresses(
-            mem_start,
-            mem_start + entry.mem_size as usize, 
+            MEM_START,
+            MEM_START + entry.mem_size as usize, 
             entry.virt_addr as usize,
             PageFlags::RW | PageFlags::USER
         );
 
-        mem_start += (entry.mem_size as usize / 0x1000 + 1) * 0x1000;
+        MEM_START += (entry.mem_size as usize / 0x1000 + 1) * 0x1000;
 
         // Copy the program into memory
         core::ptr::copy::<u8>(
@@ -108,16 +131,16 @@ pub unsafe fn run_program(program: &[u8]) {
     }
 
     // Map the program's new stack
-    (*dir).map_addresses(mem_start, mem_start + 0x1000, mem_start, PageFlags::USER | PageFlags::RW);
-    let stack_end = mem_start + 0x1000;
-    for i in (mem_start..stack_end).step_by(4) {
+    const STACK_SIZE: usize = 4096;
+    (*dir).map_addresses(MEM_START, MEM_START + STACK_SIZE, MEM_START, PageFlags::USER | PageFlags::RW);
+    let stack_end = MEM_START + STACK_SIZE;
+    for i in (MEM_START..stack_end).step_by(4) {
         let ptr = i as *mut u32;
         unsafe { *ptr = 0xDEADBEEF };
     }
 
     unsafe {
-        crate::userspace::enter();
-        let aligned_stack_top = (mem_start + 0x1000 - 4) & !0xF;
-        enter_loaded_program(header.entry, aligned_stack_top);
+        let aligned_stack_top = (MEM_START + STACK_SIZE - 4) & !0xF;
+        enter_loaded_program(header.entry, aligned_stack_top as u32);
     };
 }

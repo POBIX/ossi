@@ -55,7 +55,7 @@ impl Heap {
         // rem = self.memory + self.size - (ptr + size)
         let rem = (self.memory.add(self.size) as isize) - (ptr.add(size) as isize);
         if rem < 0 {
-            panic!("OOM: tried to allocate {} bytes, ran out of memory!", size)
+            panic!("OOM: tried to allocate {} bytes, ran out of memory by {} bytes!", size, rem.abs())
         }
         rem as usize
     }
@@ -75,6 +75,7 @@ unsafe impl GlobalAlloc for Heap {
 
             // if this block is used, go to the next one.
             if data.used {
+                self.panic_if_oom(ptr, data.size + size_of::<Data>());
                 ptr = ptr.add(data.size + size_of::<Data>());
                 continue;
             }
@@ -135,11 +136,12 @@ unsafe impl GlobalAlloc for Heap {
 static mut HEAP: Heap = Heap { memory: 0 as *mut u8, size: 0 }; // gets initialized at init()
 
 pub(crate) unsafe fn init(space_start: usize, size: usize) {
-    HEAP = Heap { memory: space_start as *mut u8, size };
+    let actual_size = size - (space_start - 0x100_000);
+    HEAP = Heap { memory: space_start as *mut u8, size: actual_size };
 
     (*paging::PageDirectory::curr()).map_addresses(
         space_start,
-        space_start + size,
+        space_start + actual_size,
         space_start,
         PageFlags::RW | PageFlags::USER
     );
@@ -147,10 +149,16 @@ pub(crate) unsafe fn init(space_start: usize, size: usize) {
     // in order to ensure that the USED flag (in Data) is false (0) for unallocated memory,
     // we zero out our entire heap.
     // TODO: don't do this. it's too slow.
-    for i in 0..size/4 {
+    for i in 0..actual_size/4 {
         *((space_start+4*i) as *mut u32) = 0;
         if i % 500_000 == 0 {
             crate::println!("{:.2}% done clearing heap..", (i as f32)/(size as f32/4.0)*100.0);
         }
     }
+
+    HAS_INIT = true;
 }
+
+// No need for mutex as we'll be modifying it exactly once, after init()
+static mut HAS_INIT: bool = false;
+pub fn has_init() -> bool { unsafe { HAS_INIT } }

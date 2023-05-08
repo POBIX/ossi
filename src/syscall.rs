@@ -139,7 +139,8 @@ decl_syscalls!(
     Empty = empty{},
     Outb = crate::io::outb{port: u16, value: u8},
     Outw = crate::io::outw{port: u16, value: u16},
-    Outl = crate::io::outl{port: u16, value: u32}
+    Outl = crate::io::outl{port: u16, value: u32},
+    NextProgram = crate::process::next_program{new_context: *const crate::process::Context}
 );
 
 fn println_syscall(msg: &str) {
