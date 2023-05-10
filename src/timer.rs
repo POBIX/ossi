@@ -19,7 +19,7 @@ extern "x86-interrupt" fn on_tick() {
     ON_TICK.lock().invoke(());
 
     // If we haven't yet initialised the heap, don't run the task scheduler code
-    if !crate::heap::has_init() {
+    if !crate::heap::has_init() || !crate::process::has_loaded_processes() {
         pic::send_eoi(0);
         return;
     }

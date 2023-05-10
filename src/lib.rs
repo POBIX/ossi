@@ -53,7 +53,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
 
     unsafe {
         // according to GRUB, there are info.mem_upper free KBs of memory at address 0x100_000.
-        // we're using a maximum of 10MB to get faster loading times,
+        // we're using a maximum of 50MB to get faster loading times,
         // and only start at heap_start_addr since some of the heap was used by paging.
         heap::init(heap_start_addr, core::cmp::min(50 * 1024 * 1024, info.mem_upper * 1024));
     }
@@ -86,13 +86,13 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
         // dealloc(buffer.as_mut_ptr(), Layout::new::<u8>());
     }
 
-    // let progb = fs::File::open("progb").unwrap();
-    // unsafe {
-    //     let buffer = heap_slice!(progb.get_metadata().size * 512, 4);
-    //     progb.read_bytes(buffer);
-    //     execution::run_program(&buffer);
-    //     dealloc(buffer.as_mut_ptr(), Layout::new::<u8>());
-    // }
+    let progb = fs::File::open("progb").unwrap();
+    unsafe {
+        let buffer = heap_slice!(progb.get_metadata().size * 512, 4);
+        progb.read_bytes(buffer);
+        execution::run_program(&buffer);
+        // dealloc(buffer.as_mut_ptr(), Layout::new::<u8>());
+    }
 
     loop {
         // syscall::Halt::call();

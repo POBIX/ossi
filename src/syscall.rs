@@ -140,7 +140,10 @@ decl_syscalls!(
     Outb = crate::io::outb{port: u16, value: u8},
     Outw = crate::io::outw{port: u16, value: u16},
     Outl = crate::io::outl{port: u16, value: u32},
-    NextProgram = crate::process::next_program{new_context: *const crate::process::Context, after: fn()}
+    NextProgram = crate::process::next_program{new_context: *const crate::process::Context, after: fn()},
+    RunProgram = crate::execution::run_program{program: &'static [u8]},
+    ReadSectors = crate::ata::read_sectors{lba: u32, buffer: *mut u8, sector_count: usize},
+    WriteSectors = crate::ata::write_sectors{lba: u32, data: *const u8, sector_count: usize}
 );
 
 fn println_syscall(msg: &str) {
