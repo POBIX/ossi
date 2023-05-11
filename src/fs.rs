@@ -180,11 +180,15 @@ impl io::Read for File {
 
     fn read_bytes(&self, buffer: &mut [u8]) -> usize {
         let md = self.get_metadata();
-        let count = usize::max(md.size, buffer.len());
+        let count = usize::min(md.size * 512, buffer.len());
 
         let sector_a = self.ptr / 512; // the sector offset of the first byte
         let sector_b = (self.ptr + count) / 512; // the sector offset of the last byte
-        let sector_count = sector_b - sector_a + 1; // the number of sectors we'll read
+        let mut sector_count = sector_b - sector_a; // the number of sectors we'll read
+        // If the read amount doesn't exactly fit within N sectors, we need to read one extra sector
+        if self.ptr % 512 != 0 || count % 512 != 0 {
+            sector_count += 1;
+        }
 
         unsafe {
             crate::ata::read_sectors((md.sector + sector_a) as u32, buffer.as_mut_ptr(), sector_count);

@@ -48,7 +48,7 @@ extern "C" {
 const HEAP_START: usize = 0x100_000;
 static mut PLACEMENT_ADDR: usize = HEAP_START;
 /// The end of the paging heap. Calculated after init()
-static mut HEAP_END: usize = usize::MAX;
+pub(crate) static mut HEAP_END: usize = usize::MAX;
 
 
 
@@ -70,12 +70,12 @@ unsafe fn kmalloc(size: usize, align: bool) -> *mut u8 {
 }
 
 static mut CURR_DIR: *mut PageDirectory = core::ptr::null_mut();
-#[repr(transparent)]
+#[repr(align(4096))]
 pub struct PageTable {
     pages: [Page; 1024],
 }
 
-#[repr(C)]
+#[repr(C, align(4096))]
 pub struct PageDirectory {
     page_tables: [*mut PageTable; 1024],
     physical_tables: [*const PageTable; 1024],
@@ -89,6 +89,7 @@ impl PageDirectory {
             let dir: *mut Self = Box::into_raw(Box::new_zeroed().assume_init());
             (*dir).frames_usage = Box::into_raw(Box::new_zeroed().assume_init());
             (*dir).map_kernel();
+            // (*dir).map_self();
             dir
         }
     }
@@ -113,6 +114,25 @@ impl PageDirectory {
                 &KERNEL_LOAD_ADDR as *const _ as usize,
                 &KERNEL_END_ADDR as *const _ as usize,
                 &KERNEL_LOAD_ADDR as *const _ as usize,
+                PageFlags::RW | PageFlags::USER
+            );
+        }
+    }
+
+    fn map_self(&mut self) {
+        unsafe {
+            // map PageDirectory
+            self.map_addresses(
+                self as *const _ as usize,
+                self as *const _ as usize + size_of::<PageDirectory>(),
+                self as *const _ as usize,
+                PageFlags::RW | PageFlags::USER
+            );
+            // map frames_usage
+            self.map_addresses(
+                self.frames_usage as usize,
+                self.frames_usage as usize + size_of::<FramesUsage>(),
+                self.frames_usage as usize,
                 PageFlags::RW | PageFlags::USER
             );
         }
@@ -172,15 +192,11 @@ impl PageDirectory {
     }
 
     pub unsafe fn switch_to(&mut self) {
-        let tables_ptr = (&self.physical_tables) as *const _ as u32;
+        let tables_ptr = (&self.physical_tables).as_ptr();
         CURR_DIR = self;
         asm!(
             "mov cr3, eax",
-            "mov eax, cr0",
-            "or eax, 0x80000000",
-            "mov cr0, eax",
-            in("eax") tables_ptr,
-            options(nostack)
+            in("eax") tables_ptr
         );
     }
 
@@ -237,7 +253,7 @@ impl FramesUsage {
     /// Sets the page's frame to frame
     pub unsafe fn set_page_frame(&mut self, page: &mut Page, frame: usize) {
         if page.frame() != 0 {
-            panic!("Page's frame already set!");
+            panic!("Page's frame already set to {}!", page.frame());
         }
         self.set_frame_used(frame, true);
         page.set_present(true);
@@ -281,8 +297,13 @@ pub fn init() -> usize {
     kernel_dir.map_kernel();
 
     unsafe {
-        // Actually enable paging CPU side
+        // Activate the directory and actually enable paging CPU side
         kernel_dir.switch_to();
+        asm!(
+            "mov eax, cr0",
+            "or eax, 0x80000000",
+            "mov cr0, eax"
+        );
     }
 
     // We've used the beginning of the "proper" heap with kmalloc, and we don't want to override anything.

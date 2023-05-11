@@ -101,8 +101,10 @@ pub unsafe fn run_program(program: &[u8]) {
         unsafe { core::slice::from_raw_parts(p_header_arr, header.prog_header_len as usize) };
 
     // Create a new page directory for this executable
-    let dir = paging::PageDirectory::curr();
-    // (*dir).switch_to();
+    let dir = paging::PageDirectory::new();
+    // Map the heap TODO: work on an actual heap :(
+    (*dir).map_addresses(paging::HEAP_END + 4096, 0x100_000 + 50*1024*1024, paging::HEAP_END+4096, PageFlags::RW | PageFlags::USER);
+    (*dir).switch_to();
 
     // Load each entry in the program header into memory
     for entry in p_header {
