@@ -1,10 +1,10 @@
 use core::arch::asm;
 
-use crate::paging::{self, PageFlags};
+use crate::paging::{self, PageFlags, PageDirectory};
 
 /// Runs the compiled code in program, starting at main_offset,
 /// and returns the error code returned by the program in EAX.
-unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32) {
+unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32, new_dir: *mut PageDirectory, prev_dir: *mut PageDirectory) {
     // push the previous stack onto the new one (for recovery after the program's execution)
     asm!(
         "mov [{new_esp}], esp",
@@ -21,11 +21,14 @@ unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32) {
         entry_point = in(reg) entry_point
     );
 
+    (*prev_dir).switch_to();
+
     // Then we pretend that start_of_program_execution is the middle of an already running program,
     // meaning the task scheduler will call it and set esp to the new stack.
     crate::process::register(
         new_esp - 12, // new_esp-8 to account for the pushed values
         start_of_program_execution as unsafe fn(u32) as u32,
+        new_dir
     );
 }
 
@@ -76,8 +79,6 @@ struct ElfProgramHeader {
 static mut MEM_START: usize = 0x4_400_000;
 
 pub unsafe fn run_program(program: &[u8]) {
-    crate::interrupts::disable();
-
     let header_bytes = &program[..core::mem::size_of::<ElfHeader>()];
     let header: &ElfHeader = unsafe { core::mem::transmute(header_bytes.as_ptr()) };
 
@@ -100,10 +101,12 @@ pub unsafe fn run_program(program: &[u8]) {
     let p_header: &[ElfProgramHeader] =
         unsafe { core::slice::from_raw_parts(p_header_arr, header.prog_header_len as usize) };
 
+    let prev_dir = PageDirectory::curr();
     // Create a new page directory for this executable
-    let dir = paging::PageDirectory::new();
+    let dir = PageDirectory::new();
     // Map the heap TODO: work on an actual heap :(
     (*dir).map_addresses(paging::HEAP_END + 4096, 0x100_000 + 50*1024*1024, paging::HEAP_END+4096, PageFlags::RW | PageFlags::USER);
+    // We switch to the new directory for the copy inside the loop. We switch back to the old once after it ends
     (*dir).switch_to();
 
     // Load each entry in the program header into memory
@@ -139,23 +142,21 @@ pub unsafe fn run_program(program: &[u8]) {
     }
 
     // Map the program's new stack
-    const STACK_SIZE: usize = 4096;
+    const STACK_SIZE: usize = 16384;
     (*dir).map_addresses(
         MEM_START,
         MEM_START + STACK_SIZE,
         MEM_START,
         PageFlags::USER | PageFlags::RW,
     );
-    let stack_end = MEM_START + STACK_SIZE;
-    for i in (MEM_START..stack_end).step_by(4) {
+    let stack_top = MEM_START + STACK_SIZE;
+    for i in (MEM_START..stack_top).step_by(4) {
         let ptr = i as *mut u32;
         unsafe { *ptr = 0xDEADBEEF };
     }
 
-    unsafe {
-        let aligned_stack_top = (MEM_START + STACK_SIZE - 4) & !0xF;
-        enter_loaded_program(header.entry, aligned_stack_top as u32);
-    };
+    MEM_START += STACK_SIZE;
 
-    crate::interrupts::enable();
+    let aligned_stack_top = (stack_top - 4) & !0xF;
+    enter_loaded_program(header.entry, aligned_stack_top as u32, dir, prev_dir);
 }

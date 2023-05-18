@@ -143,7 +143,12 @@ decl_syscalls!(
     NextProgram = crate::process::next_program{new_context: *const crate::process::Context, after: fn()},
     RunProgram = crate::execution::run_program{program: &'static [u8]},
     ReadSectors = crate::ata::read_sectors{lba: u32, buffer: *mut u8, sector_count: usize},
-    WriteSectors = crate::ata::write_sectors{lba: u32, data: *const u8, sector_count: usize}
+    WriteSectors = crate::ata::write_sectors{lba: u32, data: *const u8, sector_count: usize},
+    SetIsr = set_isr{index: usize, func: extern "x86-interrupt" fn(), dpl: u8},
+    HasInitHeap = has_init_heap{out: *mut bool},
+    HasLoadedProcesses = has_loaded_processes{out: *mut bool},
+    PicSendEoi = crate::pic::send_eoi{irq_line: u8},
+    GetCurrPageDir = get_curr_page_dir{out: *mut *mut crate::paging::PageDirectory}
 );
 
 fn println_syscall(msg: &str) {
@@ -161,3 +166,21 @@ unsafe fn alloc(ptr: *mut *mut u8, layout: core::alloc::Layout) {
 fn empty() {}
 
 fn halt() { unsafe { asm!("hlt"); } }
+
+unsafe fn set_isr(index: usize, func: extern "x86-interrupt" fn(), dpl: u8) {
+    crate::interrupts::IDT[index] = crate::interrupts::Handler::new(func, interrupts::GateType::DInterrupt, dpl);
+}
+
+macro_rules! generate_ret_func {
+    ($name: ident, $func: path, $type: ty) => {
+        fn $name(out: *mut $type) {
+            unsafe {
+                *out = $func();
+            }
+        }
+    };
+}
+
+generate_ret_func!(has_init_heap, crate::heap::has_init, bool);
+generate_ret_func!(has_loaded_processes, crate::process::has_loaded_processes, bool);
+generate_ret_func!(get_curr_page_dir, crate::paging::PageDirectory::curr, *mut crate::paging::PageDirectory);

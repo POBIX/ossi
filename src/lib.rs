@@ -10,8 +10,6 @@
 
 extern crate alloc;
 
-use alloc::alloc::dealloc;
-
 use crate::io::{Read, Clear};
 use crate::vga_console::CONSOLE;
 use core::alloc::Layout;
@@ -82,7 +80,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     unsafe {
         let buffer = heap_slice!(proga.get_metadata().size * 512, 4);
         proga.read_bytes(buffer);
-        execution::run_program(&buffer);
+        execution::run_program(buffer);
         // dealloc(buffer.as_mut_ptr(), Layout::new::<u8>());
     }
 
@@ -90,7 +88,7 @@ pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
     unsafe {
         let buffer = heap_slice!(progb.get_metadata().size * 512, 4);
         progb.read_bytes(buffer);
-        execution::run_program(&buffer);
+        execution::run_program(buffer);
         // dealloc(buffer.as_mut_ptr(), Layout::new::<u8>());
     }
 

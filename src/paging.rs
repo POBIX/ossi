@@ -215,7 +215,7 @@ impl Drop for PageDirectory {
 
 
 // A struct in which each bit corresponds to whether its frame is used (1) or not (0)
-#[repr(transparent)]
+#[repr(align(4))]
 pub struct FramesUsage([u32; 32768]); // 32768 - covers all possible addresses for 32bit
 
 impl FramesUsage {

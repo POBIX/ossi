@@ -7,7 +7,8 @@ use spin::Mutex;
 #[repr(C, packed)]
 pub struct Context {
     pub esp: u32,
-    pub eip: u32
+    pub eip: u32,
+    pub dir: *mut crate::paging::PageDirectory
 }
 
 #[repr(transparent)]
@@ -47,6 +48,7 @@ pub(crate) fn next_program(new_context: *const Context, after: fn()) {
         after();
     }
     unsafe {
+        (*(*new_process.0).dir).switch_to();
         asm!(
             // Restore stack
             "mov esp, [edi]",
@@ -58,12 +60,27 @@ pub(crate) fn next_program(new_context: *const Context, after: fn()) {
     }
 }
 
-pub fn register(esp: u32, eip: u32) {
-    let context = Box::new(Context { esp, eip });
-    let ptr = Box::into_raw(context);
-    PROCESSES.lock().push(ContextPtr(ptr));
+pub fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirectory) {
     crate::interrupts::disable();
-    next_program(ptr, crate::interrupts::enable);
+    crate::pic::set_mask(0, true);
+
+    let context = Box::new(Context { esp, eip, dir });
+    let ptr = Box::into_raw(context);
+
+    let len: usize;
+    {
+        let mut processes = PROCESSES.lock();
+        processes.push(ContextPtr(ptr));
+        len = processes.len();
+    }
+    // If this is the first program being run, we need to manually call next_program,
+    // or else it will free the context we just created and never enter the program.
+    // Otherwise it will get called by the task scheduler.
+    if len == 1 {
+        next_program(ptr, || {crate::interrupts::enable(); crate::pic::set_mask(0, false);});
+    }
+    crate::interrupts::enable();
+    crate::pic::set_mask(0, false);
 }
 
 pub fn has_loaded_processes() -> bool { PROCESSES.lock().len() != 0 }
