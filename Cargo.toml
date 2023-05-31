@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["staticlib"] # generate .a files
+crate-type = ["staticlib", "rlib"] # generate .a files
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,3 +13,4 @@ volatile = "0.2.6"
 spin = "0.9.4"
 bitflags = "2.0.0-rc.1"
 bitfield = "*"
+

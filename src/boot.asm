@@ -105,10 +105,10 @@ new_cs:
 
   mov esp, stack_top ; initialize stack
 
-  extern main ; main is defined in rust
+  extern kernel_main ; defined in rust
   push eax ; magic number to verify successful GRUB boot
   push ebx ; address of a src/grub.rs::MultibootInfo struct, provided to us by GRUB.
-  call main
+  call kernel_main
 
   ; once the kernel returns (this should theoretically never happen after it's done), loop forever
   cli

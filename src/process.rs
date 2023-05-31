@@ -21,15 +21,13 @@ unsafe impl Send for ContextPtr {}
 static PROCESSES: Mutex<Vec<ContextPtr>> = Mutex::new(Vec::new());
 static CURR_INDEX: Mutex<usize> = Mutex::new(0);
 
-/// Should only ever be invoked via syscall by the task scheduler.
 /// Switches from the current program to the next one, while updating the context of the current one
-/// after: this function will get executed right before the jump to the next program
-pub(crate) fn next_program(new_context: *const Context, after: fn()) {
+pub(crate) fn next_program(new_context: *const Context) {
     let new_process: ContextPtr;
     // Since we jump out of this function unbeknownst to the compiler (via the `ret`), we add an artificial scope.
     {
         let mut processes = PROCESSES.lock();
-        if processes.len() == 0 { after(); return; }
+        if processes.len() == 0 { return; }
         let mut curr_index = CURR_INDEX.lock();
 
         // Assign our context to the previous index
@@ -44,8 +42,6 @@ pub(crate) fn next_program(new_context: *const Context, after: fn()) {
         } else {
             *curr_index = 0;
         }
-
-        after();
     }
     unsafe {
         (*(*new_process.0).dir).switch_to();
@@ -55,13 +51,16 @@ pub(crate) fn next_program(new_context: *const Context, after: fn()) {
             // Restore eip
             "push [edi+4]", // Push eip
             "ret", // jmp to the pushed eip
-            in("edi") new_process.0
+            in("edi") new_process.0,
+            options(noreturn)
         );
     }
 }
 
+static mut HAS_LOADED_PROCESSES: bool = false;
+
 pub fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirectory) {
-    crate::interrupts::disable();
+    // Since we lock PROCESSES, we can't switch programs while registering one.
     crate::pic::set_mask(0, true);
 
     let context = Box::new(Context { esp, eip, dir });
@@ -73,14 +72,24 @@ pub fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirectory) {
         processes.push(ContextPtr(ptr));
         len = processes.len();
     }
+
+    unsafe { HAS_LOADED_PROCESSES = true; }
+
     // If this is the first program being run, we need to manually call next_program,
     // or else it will free the context we just created and never enter the program.
-    // Otherwise it will get called by the task scheduler.
     if len == 1 {
-        next_program(ptr, || {crate::interrupts::enable(); crate::pic::set_mask(0, false);});
+        // Since we had to disable the timer, user programs must manually unmask the timer at their start.
+        next_program(ptr);
     }
-    crate::interrupts::enable();
+    // Otherwise the task scheduler will automatically call it.
     crate::pic::set_mask(0, false);
 }
 
-pub fn has_loaded_processes() -> bool { PROCESSES.lock().len() != 0 }
+pub fn unregister(id: usize) {
+    // Since we lock PROCESSES, we can't switch programs while unregistering one.
+    crate::pic::set_mask(0, true);
+    PROCESSES.lock().remove(id);
+    crate::pic::set_mask(0, false);
+}
+
+pub fn has_loaded_processes() -> bool { unsafe { HAS_LOADED_PROCESSES } }

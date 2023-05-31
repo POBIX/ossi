@@ -17,7 +17,7 @@ struct GdtEntry {
     base_high: u8,
 }
 
-pub fn init() {
+pub(crate) fn init() {
     unsafe {
         let gdt = GdtPtr {
             limit: 47, // size of a GDT entry * number of entries - 1
@@ -98,7 +98,7 @@ extern "C" {
 }
 
 /// Enters userspace
-pub unsafe fn enter() {
+pub(crate) unsafe fn enter() {
     asm!(
         "mov ax, (4 * 8) | 3", // user data segment with RPL 3
         "mov ds, ax",

@@ -2,7 +2,6 @@ use core::mem::size_of;
 
 use alloc::alloc::{GlobalAlloc, Layout};
 
-//TODO: permissions
 use crate::paging::{self, PageFlags};
 /// struct that gets placed in memory every time an allocation occurs,
 /// informing the allocator whether the data can be overridden and
@@ -17,7 +16,7 @@ struct Data {
     size: usize
 }
 
-struct Heap {
+pub struct Heap {
     memory: *mut u8,
     size: usize,
 }
@@ -59,10 +58,8 @@ impl Heap {
         }
         rem as usize
     }
-}
 
-unsafe impl GlobalAlloc for Heap {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+    pub(crate) unsafe fn alloc_internal(&self, layout: Layout) -> *mut u8 {
         crate::interrupts::disable(); // prevent two simultaneous allocations
 
         // iterate over our entire heap
@@ -126,9 +123,21 @@ unsafe impl GlobalAlloc for Heap {
         );
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, _: Layout) {
+    pub(crate) unsafe fn dealloc_internal(&self, ptr: *mut u8, _: Layout) {
         // unset the used flag for the memory block that starts at ptr
         (*(ptr.sub(size_of::<Data>()) as *mut Data)).used = false;
+    }
+}
+
+unsafe impl GlobalAlloc for Heap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let mut out = core::ptr::null_mut();
+        crate::syscall::Alloc::call(self, &mut out, layout);
+        out
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        crate::syscall::Dealloc::call(self, ptr, layout);
     }
 }
 
@@ -148,7 +157,6 @@ pub(crate) unsafe fn init(space_start: usize, size: usize) {
 
     // in order to ensure that the USED flag (in Data) is false (0) for unallocated memory,
     // we zero out our entire heap.
-    // TODO: don't do this. it's too slow.
     for i in 0..actual_size/4 {
         *((space_start+4*i) as *mut u32) = 0;
         if i % 500_000 == 0 {

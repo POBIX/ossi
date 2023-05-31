@@ -28,7 +28,7 @@ build: $(ISO_OUTPUT)
 
 debug: all
 	@screen -d -m $(QEMU) $(QEMU_ARGS) -S -s
-	sleep 1
+	@sleep 1
 
 run: build
 	@$(QEMU) $(QEMU_ARGS)

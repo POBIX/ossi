@@ -33,6 +33,7 @@ unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32, new_dir: *mut Pag
 }
 
 unsafe fn start_of_program_execution(entry_point: u32) {
+    crate::pic::send_eoi(0);
     crate::userspace::enter();
 
     let ret_val: u32;
@@ -104,9 +105,8 @@ pub unsafe fn run_program(program: &[u8]) {
     let prev_dir = PageDirectory::curr();
     // Create a new page directory for this executable
     let dir = PageDirectory::new();
-    // Map the heap TODO: work on an actual heap :(
     (*dir).map_addresses(paging::HEAP_END + 4096, 0x100_000 + 50*1024*1024, paging::HEAP_END+4096, PageFlags::RW | PageFlags::USER);
-    // We switch to the new directory for the copy inside the loop. We switch back to the old once after it ends
+    // We switch to the new directory for the copy inside the loop. We switch back to the old one after it ends
     (*dir).switch_to();
 
     // Load each entry in the program header into memory

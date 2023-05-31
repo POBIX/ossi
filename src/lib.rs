@@ -40,7 +40,7 @@ extern "C" {
 }
 
 #[no_mangle]
-pub(crate) extern "C" fn main(info: &grub::MultibootInfo, magic: u32) -> ! {
+pub(crate) extern "C" fn kernel_main(info: &grub::MultibootInfo, magic: u32) -> ! {
     grub::verify(magic, info.flags).unwrap();
 
     pic::remap();
