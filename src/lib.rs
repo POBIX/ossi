@@ -65,40 +65,23 @@ pub(crate) extern "C" fn kernel_main(info: &grub::MultibootInfo, magic: u32) -> 
     console::init();
     ata::init();
 
+    let shell = fs::File::open("/shell").unwrap();
     unsafe {
-        println!("{:p} {:p}", &CODE_SEG, &DATA_SEG);
-    }
-
-    macro_rules! heap_slice {
-        ($size: expr, $align: expr) => {{
-            let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked($size, $align));
-            core::slice::from_raw_parts_mut(ptr, $size)
-        }}
-    }
-
-    let proga = fs::File::open("proga").unwrap();
-    unsafe {
-        let buffer = heap_slice!(proga.get_metadata().size * 512, 4);
-        proga.read_bytes(buffer);
+        let buffer = {
+            let size = shell.get_metadata().size * 512;
+            let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(size, 4096));
+            core::slice::from_raw_parts_mut(ptr, size)
+        };
+        shell.read_bytes(buffer);
         execution::run_program(buffer);
-        // dealloc(buffer.as_mut_ptr(), Layout::new::<u8>());
     }
 
-    let progb = fs::File::open("progb").unwrap();
-    unsafe {
-        let buffer = heap_slice!(progb.get_metadata().size * 512, 4);
-        progb.read_bytes(buffer);
-        execution::run_program(buffer);
-        // dealloc(buffer.as_mut_ptr(), Layout::new::<u8>());
-    }
-
-    loop {
-        // syscall::Halt::call();
-    }
+    loop {}
 }
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    syscall::Print::call(format_args!("{}", info));
     println!("{}", info);
     loop {}
 }

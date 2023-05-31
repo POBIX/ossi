@@ -1,5 +1,5 @@
-use core::arch::asm;
-use crate::{interrupts, io::Write};
+use core::{arch::asm, fmt::Write};
+use crate::interrupts;
 // No variadic generics :(
 pub trait SyscallBase {}
 
@@ -51,6 +51,28 @@ macro_rules! decl_syscall {
         impl SyscallBase for $name {}
     };
 
+    (_internal $name: ident<'a> = $func: path [$($arg_name:ident : $arg_type:ty),*]) => {
+        pub struct $name<'a> {
+            $($arg_name: $arg_type),*
+        }
+
+        impl<'a> $name<'a> {
+            pub fn call($($arg_name: $arg_type),*) {
+                // this should keep existing until the end of the function (after the syscall)
+                let s = $name { $($arg_name),* };
+                unsafe {
+                    asm!("int 0x81", in("eax") &s, in("ebx") SyscallLifetime::$name as u32);
+                }
+            }
+
+            // unsafe in case $func is unsafe.
+            #[allow(unused_unsafe)]
+            fn call_internal(&mut self) { unsafe { $func($(self.$arg_name),*); } }
+        }
+
+        impl<'a> SyscallBase for $name<'a> {}
+    };
+
     ($name: ident = $func: path {}) => {
         decl_syscall!(_internal $name = $func[]);
         impl Syscall0 for $name {}
@@ -85,6 +107,41 @@ macro_rules! decl_syscall {
             type T4 = $arg4t;
         }
     };
+
+    ($name: ident<'a> = $func: path {}) => {
+        decl_syscall!(_internal $name<'a> = $func[]);
+        impl<'a> Syscall0 for $name<'a> {}
+    };
+    ($name: ident<'a> = $func: path {$arg1n: ident: $arg1t: ty}) => {
+        decl_syscall!(_internal $name<'a> = $func[$arg1n: $arg1t]);
+        impl<'a> Syscall1 for $name<'a> {
+            type T1 = $arg1t;
+        }
+    };
+    ($name: ident<'a> = $func: path {$arg1n: ident: $arg1t: ty, $arg2n: ident: $arg2t: ty}) => {
+        decl_syscall!(_internal $name<'a> = $func[$arg1n: $arg1t, $arg2n: $arg2t]);
+        impl<'a> Syscall2 for $name<'a> {
+            type T1 = $arg1t;
+            type T2 = $arg2t;
+        }
+    };
+    ($name: ident<'a> = $func: path {$arg1n: ident: $arg1t: ty, $arg2n: ident: $arg2t: ty, $arg3n: ident: $arg3t: ty}) => {
+        decl_syscall!(_internal $name<'a> = $func[$arg1n: $arg1t, $arg2n: $arg2t, $arg3n: $arg3t]);
+        impl<'a> Syscall3 for $name<'a> {
+            type T1 = $arg1t;
+            type T2 = $arg2t;
+            type T3 = $arg3t;
+        }
+    };
+    ($name: ident<'a> = $func: path {$arg1n: ident: $arg1t: ty, $arg2n: ident: $arg2t: ty, $arg3n: ident: $arg3t: ty, $arg4n: ident: $arg4t: ty}) => {
+        decl_syscall!(_internal $name<'a> = $func[$arg1n: $arg1t, $arg2n: $arg2t, $arg3n: $arg3t, $arg4n: $arg4t]);
+        impl<'a> Syscall4 for $name<'a> {
+            type T1 = $arg1t;
+            type T2 = $arg2t;
+            type T3 = $arg3t;
+            type T4 = $arg4t;
+        }
+    };
 }
 
 macro_rules! decl_syscalls {
@@ -103,12 +160,31 @@ macro_rules! decl_syscalls {
             }
         }
     };
+
+    ( $( $name:ident<'a> = $syscall:path { $( $param:ident : $ty:ty ),* } ),* ) => {
+        $(decl_syscall!($name<'a> = $syscall { $( $param : $ty ),* });)*
+
+        #[repr(u32)]
+        pub enum SyscallLifetime {
+            $( $name, )*
+        }
+
+        #[no_mangle]
+        extern "C" fn syscall_handler_inner_lifetime<'a>(syscall: u32, ty: SyscallLifetime) {
+            match ty {
+                $( SyscallLifetime::$name => unsafe{core::mem::transmute::<u32, &mut $name<'a>>(syscall)}.call_internal(), )*
+            }
+        }
+    };
 }
 
 pub fn init() {
     unsafe {
         interrupts::IDT[0x80] = interrupts::Handler::new_raw(
             syscall_handler as *const () as u32, interrupts::GateType::DInterrupt, 3
+        );
+        interrupts::IDT[0x81] = interrupts::Handler::new_raw(
+            syscall_handler_lifetime as *const () as u32, interrupts::GateType::DInterrupt, 3
         );
     }
 }
@@ -126,41 +202,56 @@ extern "x86-interrupt" fn syscall_handler() {
     }
 }
 
+extern "x86-interrupt" fn syscall_handler_lifetime() {
+    unsafe {
+        asm!(
+            "cli",
+            "push ebx",
+            "push eax",
+            "call syscall_handler_inner_lifetime",
+            "add esp, 8", // pop the parameters
+            "sti"
+        )
+    }
+}
+
 /* Definition of all specific syscalls */
 
 decl_syscalls!(
-    PrintLn = println_syscall{msg: &'static str},
+    Print<'a> = print_syscall{args: core::fmt::Arguments<'a>},
+    AreInterruptsEnabled<'a> = are_interrupts_enabled{value: &'a mut bool},
+    Alloc<'a> = alloc{heap: &'a crate::heap::Heap, ptr: &'a mut *mut u8, layout: core::alloc::Layout},
+    Dealloc<'a> = crate::heap::Heap::dealloc_internal{heap: &'a crate::heap::Heap, ptr: *mut u8, layout: core::alloc::Layout},
+    RunProgram<'a> = crate::execution::run_program{program: &'a [u8]},
+    HasInitHeap<'a> = has_init_heap{out: &'a mut bool},
+    HasLoadedProcesses<'a> = has_loaded_processes{out: &'a mut bool},
+    GetCurrPageDir<'a> = get_curr_page_dir{out: &'a mut *mut crate::paging::PageDirectory}
+);
+decl_syscalls!(
     DisableInterrupts = crate::interrupts::disable{},
     EnableInterrupts = crate::interrupts::enable{},
-    AreInterruptsEnabled = are_interrupts_enabled{value: *mut bool},
     Halt = halt{},
-    Alloc = alloc{ptr: *mut *mut u8, layout: core::alloc::Layout},
-    Dealloc = alloc::alloc::dealloc{ptr: *mut u8, layout: core::alloc::Layout},
     Empty = empty{},
     Outb = crate::io::outb{port: u16, value: u8},
     Outw = crate::io::outw{port: u16, value: u16},
     Outl = crate::io::outl{port: u16, value: u32},
-    NextProgram = crate::process::next_program{new_context: *const crate::process::Context, after: fn()},
-    RunProgram = crate::execution::run_program{program: &'static [u8]},
     ReadSectors = crate::ata::read_sectors{lba: u32, buffer: *mut u8, sector_count: usize},
     WriteSectors = crate::ata::write_sectors{lba: u32, data: *const u8, sector_count: usize},
     SetIsr = set_isr{index: usize, func: extern "x86-interrupt" fn(), dpl: u8},
-    HasInitHeap = has_init_heap{out: *mut bool},
-    HasLoadedProcesses = has_loaded_processes{out: *mut bool},
     PicSendEoi = crate::pic::send_eoi{irq_line: u8},
-    GetCurrPageDir = get_curr_page_dir{out: *mut *mut crate::paging::PageDirectory}
+    PicSetMask = crate::pic::set_mask{irq_line: u8, value: bool}
 );
 
-fn println_syscall(msg: &str) {
-    crate::vga_console::CONSOLE.lock().write_string(msg);
+fn print_syscall(args: core::fmt::Arguments) {
+    crate::vga_console::CONSOLE.lock().write_fmt(args);
 }
 
 fn are_interrupts_enabled(value: *mut bool) {
     unsafe { *value = crate::interrupts::is_enabled() };
 }
 
-unsafe fn alloc(ptr: *mut *mut u8, layout: core::alloc::Layout) {
-    *ptr = alloc::alloc::alloc(layout);
+unsafe fn alloc(heap: &crate::heap::Heap, ptr: &mut *mut u8, layout: core::alloc::Layout) {
+    *ptr = heap.alloc_internal(layout);
 }
 
 fn empty() {}

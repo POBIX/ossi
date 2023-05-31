@@ -47,14 +47,15 @@ extern "x86-interrupt" fn on_tick() {
         );
     }
 
-    crate::process::next_program(context_ptr, ||{pic::send_eoi(0); crate::interrupts::enable();}); // jumps out of this function
+    crate::process::next_program(context_ptr); // jumps out of this function
 
     unsafe {
         asm!(
             ".global end_of_on_tick",
             "end_of_on_tick:",
-            "popa" // Preserve state. See comment at top of function
-        )
+        );
+        pic::send_eoi(0); crate::interrupts::enable();
+        asm!("popa") // Preserve state. See comment at top of function
     }
 }
 
