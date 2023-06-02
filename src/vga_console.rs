@@ -227,7 +227,7 @@ pub fn _print(args: fmt::Arguments) {
 
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => ($crate::vga_console::_print(format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::syscall::Print::call(format_args!($($arg)*)));
 }
 
 #[macro_export]

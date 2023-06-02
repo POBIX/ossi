@@ -243,11 +243,7 @@ decl_syscalls!(
 );
 
 fn print_syscall(args: core::fmt::Arguments) {
-    crate::vga_console::CONSOLE.lock().write_fmt(args);
-}
-
-fn are_interrupts_enabled(value: *mut bool) {
-    unsafe { *value = crate::interrupts::is_enabled() };
+    crate::vga_console::_print(args);
 }
 
 unsafe fn alloc(heap: &crate::heap::Heap, ptr: &mut *mut u8, layout: core::alloc::Layout) {
@@ -275,3 +271,4 @@ macro_rules! generate_ret_func {
 generate_ret_func!(has_init_heap, crate::heap::has_init, bool);
 generate_ret_func!(has_loaded_processes, crate::process::has_loaded_processes, bool);
 generate_ret_func!(get_curr_page_dir, crate::paging::PageDirectory::curr, *mut crate::paging::PageDirectory);
+generate_ret_func!(are_interrupts_enabled, crate::interrupts::is_enabled, bool);

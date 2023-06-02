@@ -47,6 +47,9 @@ pub(crate) extern "C" fn kernel_main(info: &grub::MultibootInfo, magic: u32) -> 
     timer::init();
     interrupts::init();
 
+    userspace::init();
+    syscall::init();
+
     let heap_start_addr = paging::init();
 
     unsafe {
@@ -55,9 +58,6 @@ pub(crate) extern "C" fn kernel_main(info: &grub::MultibootInfo, magic: u32) -> 
         // and only start at heap_start_addr since some of the heap was used by paging.
         heap::init(heap_start_addr, core::cmp::min(50 * 1024 * 1024, info.mem_upper * 1024));
     }
-
-    userspace::init();
-    syscall::init();
 
 
     CONSOLE.lock().clear();
@@ -81,7 +81,6 @@ pub(crate) extern "C" fn kernel_main(info: &grub::MultibootInfo, magic: u32) -> 
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    syscall::Print::call(format_args!("{}", info));
     println!("{}", info);
     loop {}
 }
