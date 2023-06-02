@@ -43,7 +43,8 @@ extern "x86-interrupt" fn on_tick() {
             "mov [ebx+4], eax",
             "mov [ebx+8], ecx",
             in("ebx") context_ptr,
-            in("ecx") PageDirectory::curr()
+            in("ecx") PageDirectory::curr(),
+            out("eax") _ // clobber
         );
     }
 
