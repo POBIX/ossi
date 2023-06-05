@@ -90,21 +90,21 @@ pub static mut IDT: [Handler; 256] = [Handler::null(); 256];
 static IDTR: Lazy<IDTR> = unsafe { Lazy::new(|| IDTR::new()) };
 static mut ENABLED: bool = false;
 
-pub fn enable() {
+pub(crate) fn enable() {
     unsafe {
         asm!("sti");
         ENABLED = true;
     }
 }
 
-pub fn disable() {
+pub(crate) fn disable() {
     unsafe {
         asm!("cli");
         ENABLED = false;
     }
 }
 
-pub fn is_enabled() -> bool { unsafe { ENABLED } }
+pub(crate) fn is_enabled() -> bool { unsafe { ENABLED } }
 
 macro_rules! int_fn {
     ($name:tt) => {

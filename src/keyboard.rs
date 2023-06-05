@@ -249,7 +249,7 @@ impl Key {
 
 const MAX_SCANCODE: usize = Key::Unknown as usize;
 
-pub fn init() {
+pub(crate) fn init() {
     unsafe {
         // attach on_key to IRQ1
         interrupts::IDT[pic::IRQ_OFFSET + 1] =
@@ -342,12 +342,12 @@ fn get_pos(key: Key) -> (usize, u8) {
     return (k / 8, k as u8 % 8);
 }
 
-pub fn is_key_pressed(key: Key) -> bool {
+pub(crate) fn is_key_pressed(key: Key) -> bool {
     let (index, bit) = get_pos(key);
     ((KEYS.lock()[index] >> bit) & 1) == 1
 }
 
-pub fn set_key(key: Key, pressed: bool) {
+pub(crate) fn set_key(key: Key, pressed: bool) {
     let (index, bit) = get_pos(key);
     let v = pressed as u8;
     // modify the array to have that bit set to the correct value
@@ -355,7 +355,7 @@ pub fn set_key(key: Key, pressed: bool) {
     keys[index] = keys[index] & !(1 << bit) | (v << bit);
 }
 
-pub fn is_caps_lock_active() -> bool {
+pub(crate) fn is_caps_lock_active() -> bool {
     // we can't accept keyboard input while checking the value (what if you press caps lock while reading it?)
     pic::set_mask(1, true);
     let ret = *CAPS_LOCK.lock();
@@ -370,7 +370,7 @@ static KEYS: Mutex<[u8; MAX_SCANCODE / 8]> = Mutex::new([0; MAX_SCANCODE / 8]);
 #[derive(Clone, Copy)]
 pub struct KeyArgs(pub Key);
 
-pub static ON_KEY_DOWN: Mutex<Event<KeyArgs>> = Mutex::new(Event::<KeyArgs>::new());
-pub static ON_KEY_UP: Mutex<Event<KeyArgs>> = Mutex::new(Event::<KeyArgs>::new());
+pub(crate) static ON_KEY_DOWN: Mutex<Event<KeyArgs>> = Mutex::new(Event::<KeyArgs>::new());
+pub(crate) static ON_KEY_UP: Mutex<Event<KeyArgs>> = Mutex::new(Event::<KeyArgs>::new());
 
 static CAPS_LOCK: Mutex<bool> = Mutex::new(false);

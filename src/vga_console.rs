@@ -30,7 +30,7 @@ pub enum Color {
 pub struct ColorCode(u8);
 
 impl ColorCode {
-    pub(crate) const fn new(foreground: Color, background: Color) -> ColorCode {
+    pub const fn new(foreground: Color, background: Color) -> ColorCode {
         ColorCode(((background as u8) << 4) | (foreground as u8))
     }
 }
@@ -42,9 +42,9 @@ struct Char {
     color: ColorCode,
 }
 
-const VGA_BUFFER_WIDTH: usize = 80;
-const VGA_BUFFER_HEIGHT: usize = 15;
-const VGA_BUFFER_SIZE: usize = VGA_BUFFER_WIDTH * VGA_BUFFER_HEIGHT;
+pub const VGA_BUFFER_WIDTH: usize = 80;
+pub const VGA_BUFFER_HEIGHT: usize = 15;
+pub const VGA_BUFFER_SIZE: usize = VGA_BUFFER_WIDTH * VGA_BUFFER_HEIGHT;
 
 #[repr(transparent)]
 struct Buffer {
@@ -54,7 +54,7 @@ struct Buffer {
 //TODO: refactor this mess
 impl Buffer {
     fn write(&mut self, ptr: &mut usize, byte: u8, color: ColorCode) {
-        if *ptr >= VGA_BUFFER_SIZE {
+        while *ptr >= VGA_BUFFER_SIZE {
             self.scroll_down(ptr, color);
         }
         self.buffer[*ptr].write(Char { byte, color });
@@ -203,7 +203,7 @@ impl Console {
     }
 }
 
-pub static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| {
+pub(crate) static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| {
     Mutex::new(Console {
         ptr: 0,
         color: ColorCode::new(Color::White, Color::Black),
@@ -219,10 +219,16 @@ pub fn _print(args: fmt::Arguments) {
         // interrupts might mean another print, which would cause a deadlock.
         crate::interrupts::disable();
     }
-    CONSOLE.lock().write_fmt(args).unwrap();
+    let result = {
+        let mut console = CONSOLE.lock();
+        console.write_fmt(args)
+    };
+    result.unwrap();
     if ints_enabled {
         crate::interrupts::enable();
     }
+    
+    drop(CONSOLE.lock());
 }
 
 #[macro_export]

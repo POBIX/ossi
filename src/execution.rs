@@ -1,6 +1,8 @@
-use core::arch::asm;
+use core::{arch::asm, alloc::Layout};
 
-use crate::paging::{self, PageFlags, PageDirectory};
+use alloc::alloc::dealloc;
+
+use crate::{paging::{self, PageFlags, PageDirectory}, io::Read};
 
 /// Runs the compiled code in program, starting at main_offset,
 /// and returns the error code returned by the program in EAX.
@@ -79,7 +81,7 @@ struct ElfProgramHeader {
 // TODO: work on an actual heap that isn't hardcoded so this won't be a thing.
 static mut MEM_START: usize = 0x4_400_000;
 
-pub unsafe fn run_program(program: &[u8]) {
+pub(crate) unsafe fn run_program(program: &[u8]) {
     let header_bytes = &program[..core::mem::size_of::<ElfHeader>()];
     let header: &ElfHeader = unsafe { core::mem::transmute(header_bytes.as_ptr()) };
 
@@ -159,4 +161,21 @@ pub unsafe fn run_program(program: &[u8]) {
 
     let aligned_stack_top = (stack_top - 4) & !0xF;
     enter_loaded_program(header.entry, aligned_stack_top as u32, dir, prev_dir);
+}
+
+pub fn execute_file(file: &crate::fs::File) {
+    let buffer = {
+        let buffer = unsafe {
+            let size = file.get_metadata().size * 512;
+            let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(size, 4096));
+            core::slice::from_raw_parts_mut(ptr, size)
+        };
+        file.read_bytes(buffer);
+        drop(file);
+        buffer
+    };
+    unsafe {
+        run_program(buffer);
+        dealloc(buffer.as_mut_ptr(), Layout::from_size_align_unchecked(0, 0));
+    }
 }

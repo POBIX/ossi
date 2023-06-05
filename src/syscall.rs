@@ -1,5 +1,8 @@
-use core::{arch::asm, fmt::Write};
-use crate::interrupts;
+use core::arch::asm;
+use alloc::{vec::Vec, string::String};
+use spin::{Mutex, Lazy};
+
+use crate::{interrupts, events::Event};
 // No variadic generics :(
 pub trait SyscallBase {}
 
@@ -220,12 +223,19 @@ extern "x86-interrupt" fn syscall_handler_lifetime() {
 decl_syscalls!(
     Print<'a> = print_syscall{args: core::fmt::Arguments<'a>},
     AreInterruptsEnabled<'a> = are_interrupts_enabled{value: &'a mut bool},
-    Alloc<'a> = alloc{heap: &'a crate::heap::Heap, ptr: &'a mut *mut u8, layout: core::alloc::Layout},
-    Dealloc<'a> = crate::heap::Heap::dealloc_internal{heap: &'a crate::heap::Heap, ptr: *mut u8, layout: core::alloc::Layout},
+    Alloc<'a> = alloc{ptr: &'a mut *mut u8, layout: core::alloc::Layout},
     RunProgram<'a> = crate::execution::run_program{program: &'a [u8]},
     HasInitHeap<'a> = has_init_heap{out: &'a mut bool},
     HasLoadedProcesses<'a> = has_loaded_processes{out: &'a mut bool},
-    GetCurrPageDir<'a> = get_curr_page_dir{out: &'a mut *mut crate::paging::PageDirectory}
+    GetCurrPageDir<'a> = get_curr_page_dir{out: &'a mut *mut crate::paging::PageDirectory},
+    GetOnKeyDown<'a> = get_on_key_down{out: &'a mut &'static Mutex<Event<crate::keyboard::KeyArgs>>},
+    GetOnKeyUp<'a> = get_on_key_up{out: &'a mut &'static Mutex<Event<crate::keyboard::KeyArgs>>},
+    GetConsole<'a> = get_console{out: &'a mut &'static Lazy<Mutex<crate::vga_console::Console>>},
+    IsKeyPressed<'a> = is_key_pressed{out: &'a mut bool, key: crate::keyboard::Key},
+    IsCapsLockActive<'a> = is_caps_lock_active{out: &'a mut bool},
+    FsGetHeader<'a> = fs_get_header{out: &'a mut &'static Lazy<Mutex<&'static mut crate::fs::Header>>},
+    GetFilesInDir<'a> = crate::fs::dir{root: &'a str, folders: &'a mut Vec<String>, files: &'a mut Vec<crate::fs::FileMetadata>},
+    ExecuteFile<'a> = crate::execution::execute_file{file: &'a crate::fs::File}
 );
 decl_syscalls!(
     DisableInterrupts = crate::interrupts::disable{},
@@ -239,15 +249,24 @@ decl_syscalls!(
     WriteSectors = crate::ata::write_sectors{lba: u32, data: *const u8, sector_count: usize},
     SetIsr = set_isr{index: usize, func: extern "x86-interrupt" fn(), dpl: u8},
     PicSendEoi = crate::pic::send_eoi{irq_line: u8},
-    PicSetMask = crate::pic::set_mask{irq_line: u8, value: bool}
+    PicSetMask = crate::pic::set_mask{irq_line: u8, value: bool},
+    Dealloc = dealloc{ptr: *mut u8, layout: core::alloc::Layout}
 );
 
 fn print_syscall(args: core::fmt::Arguments) {
     crate::vga_console::_print(args);
 }
 
-unsafe fn alloc(heap: &crate::heap::Heap, ptr: &mut *mut u8, layout: core::alloc::Layout) {
-    *ptr = heap.alloc_internal(layout);
+unsafe fn alloc(ptr: &mut *mut u8, layout: core::alloc::Layout) {
+    *ptr = crate::heap::HEAP.alloc_internal(layout);
+}
+
+unsafe fn dealloc(ptr: *mut u8, layout: core::alloc::Layout) {
+    crate::heap::HEAP.dealloc_internal(ptr, layout);
+}
+
+fn is_key_pressed(out: &mut bool, key: crate::keyboard::Key) {
+    *out = crate::keyboard::is_key_pressed(key);
 }
 
 fn empty() {}
@@ -259,16 +278,26 @@ unsafe fn set_isr(index: usize, func: extern "x86-interrupt" fn(), dpl: u8) {
 }
 
 macro_rules! generate_ret_func {
-    ($name: ident, $func: path, $type: ty) => {
-        fn $name(out: *mut $type) {
-            unsafe {
-                *out = $func();
-            }
+    ($name: ident, $expr: expr, $type: ty) => {
+        fn $name(out: &mut $type) {
+            *out = $expr;
         }
     };
 }
 
-generate_ret_func!(has_init_heap, crate::heap::has_init, bool);
-generate_ret_func!(has_loaded_processes, crate::process::has_loaded_processes, bool);
-generate_ret_func!(get_curr_page_dir, crate::paging::PageDirectory::curr, *mut crate::paging::PageDirectory);
-generate_ret_func!(are_interrupts_enabled, crate::interrupts::is_enabled, bool);
+generate_ret_func!(has_init_heap, crate::heap::has_init(), bool);
+generate_ret_func!(has_loaded_processes, crate::process::has_loaded_processes(), bool);
+generate_ret_func!(get_curr_page_dir, crate::paging::PageDirectory::curr(), *mut crate::paging::PageDirectory);
+generate_ret_func!(are_interrupts_enabled, crate::interrupts::is_enabled(), bool);
+generate_ret_func!(get_on_key_down, &crate::keyboard::ON_KEY_DOWN, &'static Mutex<Event<crate::keyboard::KeyArgs>>);
+generate_ret_func!(get_on_key_up, &crate::keyboard::ON_KEY_UP, &'static Mutex<Event<crate::keyboard::KeyArgs>>);
+generate_ret_func!(get_console, &crate::vga_console::CONSOLE, &'static Lazy<Mutex<crate::vga_console::Console>>);
+generate_ret_func!(is_caps_lock_active, crate::keyboard::is_caps_lock_active(), bool);
+generate_ret_func!(fs_get_header, &crate::fs::HEADER, &'static Lazy<Mutex<&'static mut crate::fs::Header>>);
+
+#[allow(invalid_value)] // out's initial value is discarded. Giving it an actual value would be a massive waste of performance.
+pub fn get_fs_header() -> &'static Lazy<Mutex<&'static mut crate::fs::Header>>{
+    let mut out = unsafe { core::mem::transmute(0) };
+    FsGetHeader::call(&mut out);
+    out
+}

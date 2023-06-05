@@ -80,7 +80,7 @@ fn panic_if_error() {
 }
 
 /// reads the first sector_count sectors from the hard disk, at address lba, into buffer.
-pub unsafe fn read_sectors(lba: u32, buffer: *mut u8, sector_count: usize) {
+pub(crate) unsafe fn read_sectors(lba: u32, buffer: *mut u8, sector_count: usize) {
     // We can only read 255 sectors a time
     let reads_count = sector_count / 255 + 1;
 
@@ -114,7 +114,7 @@ pub unsafe fn read_sectors(lba: u32, buffer: *mut u8, sector_count: usize) {
 }
 
 /// writes the first sector_count sectors of data to the disk, at address lba.
-pub unsafe fn write_sectors(lba: u32, data: *const u8, sector_count: usize) {
+pub(crate) unsafe fn write_sectors(lba: u32, data: *const u8, sector_count: usize) {
     // We can only write 255 sectors at a time
     let writes_count = sector_count / 255 + 1;
 
@@ -143,6 +143,5 @@ pub unsafe fn write_sectors(lba: u32, data: *const u8, sector_count: usize) {
             }
         }
         sectors_written += batch_size as u32;
-        crate::println!("{}% done", (i as f32/writes_count as f32)*100.0);
     }
 }
