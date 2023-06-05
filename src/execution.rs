@@ -163,7 +163,7 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
     enter_loaded_program(header.entry, aligned_stack_top as u32, dir, prev_dir);
 }
 
-pub fn execute_file(file: &crate::fs::File) {
+pub fn execute_file(file: &mut crate::fs::File) {
     let buffer = {
         let buffer = unsafe {
             let size = file.get_metadata().size * 512;
@@ -171,7 +171,7 @@ pub fn execute_file(file: &crate::fs::File) {
             core::slice::from_raw_parts_mut(ptr, size)
         };
         file.read_bytes(buffer);
-        drop(file);
+        file.close();
         buffer
     };
     unsafe {

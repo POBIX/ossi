@@ -234,8 +234,8 @@ decl_syscalls!(
     IsKeyPressed<'a> = is_key_pressed{out: &'a mut bool, key: crate::keyboard::Key},
     IsCapsLockActive<'a> = is_caps_lock_active{out: &'a mut bool},
     FsGetHeader<'a> = fs_get_header{out: &'a mut &'static Lazy<Mutex<&'static mut crate::fs::Header>>},
-    GetFilesInDir<'a> = crate::fs::dir{root: &'a str, folders: &'a mut Vec<String>, files: &'a mut Vec<crate::fs::FileMetadata>},
-    ExecuteFile<'a> = crate::execution::execute_file{file: &'a crate::fs::File}
+    GetFilesInDir<'a> = crate::fs::dir{root: &'a String, folders: &'a mut Vec<String>, files: &'a mut Vec<crate::fs::FileMetadata>},
+    ExecuteFile<'a> = crate::execution::execute_file{file: &'a mut crate::fs::File}
 );
 decl_syscalls!(
     DisableInterrupts = crate::interrupts::disable{},

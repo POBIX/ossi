@@ -46,6 +46,7 @@ pub(crate) extern "C" fn kernel_main(info: &grub::MultibootInfo, magic: u32) -> 
     timer::init();
     interrupts::init();
 
+
     userspace::init();
     syscall::init();
 
@@ -63,7 +64,7 @@ pub(crate) extern "C" fn kernel_main(info: &grub::MultibootInfo, magic: u32) -> 
     keyboard::init();
     ata::init();
 
-    execution::execute_file(&fs::File::open("/shell").unwrap());
+    execution::execute_file(&mut fs::File::open("/shell").unwrap());
 
     loop {}
 }

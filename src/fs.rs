@@ -167,14 +167,19 @@ impl File {
         header.entries[self.index].size = val;
         update_header(&header);
     }
-}
 
-impl Drop for File {
-    fn drop(&mut self) {
+    pub fn close(&mut self) {
         // close the file
         let mut header = crate::syscall::get_fs_header().lock();
         header.entries[self.index].flags.set(FileFlags::OPENED, false);
         self.index = MAX_FILES+1; // mark this reference as invalid
+        update_header(&header);
+    }
+}
+
+impl Drop for File {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -266,8 +271,9 @@ fn update_header(header: &Header) {
     }
 }
 
-pub(crate) fn dir(root: &str, folders: &mut Vec<String>, files: &mut Vec<FileMetadata>) {
+pub(crate) fn dir(root: &String, folders: &mut Vec<String>, files: &mut Vec<FileMetadata>) {
     let header = crate::syscall::get_fs_header().lock();
+
     for file in &header.entries {
         if !file.path.starts_with(root.as_bytes()) {
             continue;
@@ -281,7 +287,7 @@ pub(crate) fn dir(root: &str, folders: &mut Vec<String>, files: &mut Vec<FileMet
         else {
             // Otherwise, get the folder
             let name = unsafe { core::str::from_utf8_unchecked(split[0]) };
-            if !folders.iter().all(|item| item != name) {
+            if folders.iter().all(|item| *item != name) {
                 folders.push(name.to_string())
             }
         }
