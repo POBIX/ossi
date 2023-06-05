@@ -1,7 +1,7 @@
 use core::alloc::Layout;
 use core::mem::size_of;
 
-use alloc::alloc::alloc;
+use alloc::{alloc::alloc, vec::Vec, string::{String, ToString}};
 use spin::{Lazy, Mutex};
 
 use crate::io;
@@ -38,7 +38,7 @@ pub struct FileMetadata {
 
 /// The struct that sits at the top of the hard drive, containing the FileMetadata maps.
 #[repr(packed)]
-struct Header {
+pub struct Header {
     first_null: usize, // the index (in entries, the next field) of the first null FileMetadata.
     entries: [FileMetadata; MAX_FILES],
     _padding: [u8; 1024 - 988], // align to 512 bytes
@@ -64,7 +64,7 @@ impl File {
     fn from_index(index: usize) -> File { File { index, ptr: 0 } }
 
     pub fn open(path: &str) -> Result<File, FileError> {
-        let mut header = HEADER.lock();
+        let mut header = crate::syscall::get_fs_header().lock();
 
         // search for a file with the same path as the parameter
         for i in 0..header.entries.len() {
@@ -87,8 +87,8 @@ impl File {
         Err(FileError::FileNotFound)
     }
 
-    pub fn create(path: &'static str) -> Result<File, FileError> {
-        let mut header = HEADER.lock();
+    pub fn create(path: &str) -> Result<File, FileError> {
+        let mut header = crate::syscall::get_fs_header().lock();
 
         if path.len() >= MAX_PATH_LENGTH {
             return Err(FileError::PathTooLong);
@@ -97,12 +97,26 @@ impl File {
             return Err(FileError::TooManyFiles);
         }
 
+        // Make sure that path doesn't already exist
+        for i in 0..header.entries.len() {
+            let file = &mut header.entries[i];
+            // convert the path (a null terminated [u8]) to a rust string
+            let file_path = unsafe {
+                core::str::from_utf8_unchecked(
+                    core::ffi::CStr::from_ptr(file.path.as_ptr() as *const _).to_bytes(),
+                )
+            };
+            if file_path == path {
+                return Err(FileError::FileAlreadyExists);
+            }
+        }
+
         // header.first_null is the index of the file we're going to create.
         // in order to figure out which sector we should write to,
         // we simply add one sector to the previous file's sector.
         // TODO: this assumes files are never deleted.
         let addr: usize = if header.first_null > 0 {
-            let prev = header.entries[header.first_null];
+            let prev = header.entries[header.first_null-1];
             prev.sector + prev.size
         } else {
             // or, if this is the first file, use the first available sector.
@@ -119,10 +133,12 @@ impl File {
         header.entries[first_null] = FileMetadata {
             path: padded_path,
             sector: addr,
-            size: 2269,
+            size: 1,
             flags: FileFlags::empty()
         };
         header.first_null += 1;
+
+        crate::println!("{} {} {}", unsafe { core::str::from_utf8_unchecked(&padded_path) }, addr, 1);
 
         // update it on disk
         update_header(&header);
@@ -131,7 +147,7 @@ impl File {
     }
 
     pub fn delete(&mut self) -> Result<(), FileError>{
-        let mut header = HEADER.lock();
+        let mut header = crate::syscall::get_fs_header().lock();
         let metadata = &mut header.entries[self.index];
 
         if !metadata.flags.contains(FileFlags::OPENED) {
@@ -143,14 +159,20 @@ impl File {
 
     #[inline]
     pub fn get_metadata(&self) -> FileMetadata {
-        HEADER.lock().entries[self.index]
+        crate::syscall::get_fs_header().lock().entries[self.index]
+    }
+
+    pub fn set_size(&mut self, val: usize) {
+        let mut header = crate::syscall::get_fs_header().lock();
+        header.entries[self.index].size = val;
+        update_header(&header);
     }
 }
 
 impl Drop for File {
     fn drop(&mut self) {
         // close the file
-        let mut header = HEADER.lock();
+        let mut header = crate::syscall::get_fs_header().lock();
         header.entries[self.index].flags.set(FileFlags::OPENED, false);
         self.index = MAX_FILES+1; // mark this reference as invalid
     }
@@ -171,9 +193,7 @@ impl io::Read for File {
         let sector_offset = self.ptr / 512; // the sector our byte is in
         let mut buffer = [0u8; 512]; // we have to read the whole sector, even for just one byte
         let md = self.get_metadata();
-        unsafe {
-            crate::ata::read_sectors((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
-        }
+        crate::syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
 
         buffer[self.ptr % 512]
     }
@@ -189,10 +209,7 @@ impl io::Read for File {
         if self.ptr % 512 != 0 || count % 512 != 0 {
             sector_count += 1;
         }
-
-        unsafe {
-            crate::ata::read_sectors((md.sector + sector_a) as u32, buffer.as_mut_ptr(), sector_count);
-        }
+        crate::syscall::ReadSectors::call((md.sector + sector_a) as u32, buffer.as_mut_ptr(), sector_count);
         count
     }
 }
@@ -203,17 +220,13 @@ impl io::Write for File {
         let mut buffer = [0u8; 512]; // we have to write over the whole sector, even for just one byte
         // in order to not overwrite anything else, read this sector first
         let md = self.get_metadata();
-        unsafe {
-            crate::ata::read_sectors((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
-        }
+        crate::syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
 
         // set the byte
         buffer[self.ptr % 512] = byte;
 
         // update the sector on disk
-        unsafe {
-            crate::ata::write_sectors((md.sector + sector_offset) as u32, buffer.as_ptr(), 1);
-        }
+        crate::syscall::WriteSectors::call((md.sector + sector_offset) as u32, buffer.as_ptr(), 1);
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) {
@@ -230,9 +243,7 @@ impl io::Write for File {
         let md = self.get_metadata();
 
         // update the sectors on disk
-        unsafe {
-            crate::ata::write_sectors((md.sector + sector_a) as u32, bytes.as_ptr(), sector_count);
-        }
+        crate::syscall::WriteSectors::call((md.sector + sector_a) as u32, bytes.as_ptr(), sector_count);
     }
 }
 
@@ -240,7 +251,7 @@ fn read_header() -> Mutex<&'static mut Header> {
     unsafe {
         let ptr = alloc(Layout::from_size_align_unchecked(HEADER_SECTORS * 512, 4));
         let header: &mut Header;
-        crate::ata::read_sectors(0, ptr, HEADER_SECTORS);
+        crate::syscall::ReadSectors::call(0, ptr, HEADER_SECTORS);
         header = core::mem::transmute(ptr);
         Mutex::new(header)
     }
@@ -251,8 +262,30 @@ fn read_header() -> Mutex<&'static mut Header> {
 fn update_header(header: &Header) {
     unsafe {
         // we transmute header to be a byte array, and we use *& in order to get the data behind the mutex.
-        crate::ata::write_sectors(0, core::mem::transmute(header), HEADER_SECTORS);
+        crate::syscall::WriteSectors::call(0, core::mem::transmute(header), HEADER_SECTORS);
     }
 }
 
-static HEADER: Lazy<Mutex<&mut Header>> = Lazy::new(read_header);
+pub(crate) fn dir(root: &str, folders: &mut Vec<String>, files: &mut Vec<FileMetadata>) {
+    let header = crate::syscall::get_fs_header().lock();
+    for file in &header.entries {
+        if !file.path.starts_with(root.as_bytes()) {
+            continue;
+        }
+        let split: Vec<_> = file.path[root.len()..].split(|&b| b == b'/').collect();
+
+        // If there aren't any slashes in the path (after removing the root), it's a top level file
+        if split.len() == 1 {
+            files.push(file.clone());
+        }
+        else {
+            // Otherwise, get the folder
+            let name = unsafe { core::str::from_utf8_unchecked(split[0]) };
+            if !folders.iter().all(|item| item != name) {
+                folders.push(name.to_string())
+            }
+        }
+    }
+}
+
+pub(crate) static HEADER: Lazy<Mutex<&mut Header>> = Lazy::new(read_header);
