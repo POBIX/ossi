@@ -21,6 +21,22 @@ unsafe impl Send for ContextPtr {}
 static PROCESSES: Mutex<Vec<ContextPtr>> = Mutex::new(Vec::new());
 static CURR_INDEX: Mutex<usize> = Mutex::new(0);
 
+fn next_index(curr_index: usize, proc_len: usize) -> usize {
+    if curr_index < proc_len - 1 {
+        curr_index + 1
+    } else {
+        0
+    }
+}
+
+fn prev_index(curr_index: usize, proc_len: usize) -> usize {
+    if curr_index > 0 {
+        curr_index - 1
+    } else {
+        proc_len - 1
+    }
+}
+
 /// Switches from the current program to the next one, while updating the context of the current one
 pub(crate) fn next_program(new_context: *const Context) {
     let new_process: ContextPtr;
@@ -31,17 +47,13 @@ pub(crate) fn next_program(new_context: *const Context) {
         let mut curr_index = CURR_INDEX.lock();
 
         // Assign our context to the previous index
-        let replace = if *curr_index != 0 { *curr_index - 1 } else { processes.len() - 1 };
-        unsafe { Box::from_raw(processes[replace].0 as *mut Context) }; // free previous context
+        let replace = prev_index(*curr_index, processes.len());
+        unsafe { drop(Box::from_raw(processes[replace].0 as *mut Context)); } // free previous context
         processes[replace] = ContextPtr(new_context);
 
         new_process = processes[*curr_index];
 
-        if *curr_index < processes.len() - 1 {
-            *curr_index += 1;
-        } else {
-            *curr_index = 0;
-        }
+        *curr_index = next_index(*curr_index, processes.len());
     }
     unsafe {
         (*(*new_process.0).dir).switch_to();
@@ -59,7 +71,7 @@ pub(crate) fn next_program(new_context: *const Context) {
 
 static mut HAS_LOADED_PROCESSES: bool = false;
 
-pub fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirectory) {
+pub(crate) fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirectory) {
     // Since we lock PROCESSES, we can't switch programs while registering one.
     crate::pic::set_mask(0, true);
 
@@ -71,6 +83,8 @@ pub fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirectory) {
         let mut processes = PROCESSES.lock();
         processes.push(ContextPtr(ptr));
         len = processes.len();
+        let mut curr_index = CURR_INDEX.lock();
+        *curr_index = next_index(*curr_index , len);
     }
 
     unsafe { HAS_LOADED_PROCESSES = true; }
@@ -85,11 +99,27 @@ pub fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirectory) {
     crate::pic::set_mask(0, false);
 }
 
-pub fn unregister(id: usize) {
+pub(crate) fn unregister_prev() {
     // Since we lock PROCESSES, we can't switch programs while unregistering one.
     crate::pic::set_mask(0, true);
-    PROCESSES.lock().remove(id);
+
+    let mut curr_index = CURR_INDEX.lock();
+    let processes = PROCESSES.lock();
+    *curr_index = prev_index(*curr_index, processes.len());
+    unsafe { (*(processes[*curr_index].0 as *mut Context)).eip = kill_process as u32; };
     crate::pic::set_mask(0, false);
+}
+
+fn kill_process() {
+    let curr;
+    {
+        let mut processes = PROCESSES.lock();
+        let len = processes.len();
+        let curr_index = CURR_INDEX.lock();
+        processes.remove(prev_index(*curr_index, len));
+        curr = processes[*curr_index].0;
+    }
+    next_program(curr);
 }
 
 pub fn has_loaded_processes() -> bool { unsafe { HAS_LOADED_PROCESSES } }

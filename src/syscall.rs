@@ -250,7 +250,9 @@ decl_syscalls!(
     SetIsr = set_isr{index: usize, func: extern "x86-interrupt" fn(), dpl: u8},
     PicSendEoi = crate::pic::send_eoi{irq_line: u8},
     PicSetMask = crate::pic::set_mask{irq_line: u8, value: bool},
-    Dealloc = dealloc{ptr: *mut u8, layout: core::alloc::Layout}
+    Dealloc = dealloc{ptr: *mut u8, layout: core::alloc::Layout},
+    UnreigsterProcess = crate::process::unregister_prev{},
+    IoWait = crate::io::wait{}
 );
 
 fn print_syscall(args: core::fmt::Arguments) {

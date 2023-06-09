@@ -29,22 +29,25 @@ unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32, new_dir: *mut Pag
     // meaning the task scheduler will call it and set esp to the new stack.
     crate::process::register(
         new_esp - 12, // new_esp-8 to account for the pushed values
-        start_of_program_execution as unsafe fn(u32) as u32,
+        start_of_program_execution as unsafe fn(fn()) as u32,
         new_dir
     );
 }
 
-unsafe fn start_of_program_execution(entry_point: u32) {
+unsafe fn start_of_program_execution(entry_point: fn()) {
     crate::pic::send_eoi(0);
     crate::userspace::enter();
 
-    let ret_val: u32;
-    asm!(
-        "call {fn_ptr}",
-        "pop esp",
-        fn_ptr = in(reg) entry_point,
-        out("eax") ret_val,
-    );
+    entry_point(); // Jumps out of here until the end of program execution
+
+    // When we're done executing the program, we can simply remove it from
+    // the list of active processes and then wait for the task scheduler
+    // to run the next program. Since this process won't be a candidate anymore
+    // it won't be executed ever again and it will effectively quit.
+    crate::syscall::PicSetMask::call(0, false);
+    crate::syscall::PicSendEoi::call(0);
+    crate::syscall::UnreigsterProcess::call();
+    loop {}
 }
 
 #[repr(C)]
@@ -176,6 +179,6 @@ pub fn execute_file(file: &mut crate::fs::File) {
     };
     unsafe {
         run_program(buffer);
-        dealloc(buffer.as_mut_ptr(), Layout::from_size_align_unchecked(0, 0));
+        dealloc(buffer.as_mut_ptr(), Layout::from_size_align_unchecked(2, 2));
     }
 }

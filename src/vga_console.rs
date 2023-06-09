@@ -227,8 +227,6 @@ pub fn _print(args: fmt::Arguments) {
     if ints_enabled {
         crate::interrupts::enable();
     }
-    
-    drop(CONSOLE.lock());
 }
 
 #[macro_export]

@@ -69,6 +69,7 @@ impl File {
         // search for a file with the same path as the parameter
         for i in 0..header.entries.len() {
             let file = &mut header.entries[i];
+            if file.flags.contains(FileFlags::DELETED) { continue; }
             // convert the path (a null terminated [u8]) to a rust string
             let file_path = unsafe {
                 core::str::from_utf8_unchecked(
@@ -100,6 +101,7 @@ impl File {
         // Make sure that path doesn't already exist
         for i in 0..header.entries.len() {
             let file = &mut header.entries[i];
+            if file.flags.contains(FileFlags::DELETED) { continue; }
             // convert the path (a null terminated [u8]) to a rust string
             let file_path = unsafe {
                 core::str::from_utf8_unchecked(
@@ -138,8 +140,6 @@ impl File {
         };
         header.first_null += 1;
 
-        crate::println!("{} {} {}", unsafe { core::str::from_utf8_unchecked(&padded_path) }, addr, 1);
-
         // update it on disk
         update_header(&header);
 
@@ -154,6 +154,7 @@ impl File {
             return Err(FileError::FileClosed);
         }
         metadata.flags.set(FileFlags::DELETED, true);
+        update_header(&header);
         Ok(())
     }
 
@@ -171,6 +172,10 @@ impl File {
     pub fn close(&mut self) {
         // close the file
         let mut header = crate::syscall::get_fs_header().lock();
+        if self.index >= header.entries.len() {
+            // File already closed
+            return;
+        }
         header.entries[self.index].flags.set(FileFlags::OPENED, false);
         self.index = MAX_FILES+1; // mark this reference as invalid
         update_header(&header);
@@ -275,7 +280,7 @@ pub(crate) fn dir(root: &String, folders: &mut Vec<String>, files: &mut Vec<File
     let header = crate::syscall::get_fs_header().lock();
 
     for file in &header.entries {
-        if !file.path.starts_with(root.as_bytes()) {
+        if !file.path.starts_with(root.as_bytes()) || file.flags.contains(FileFlags::DELETED) {
             continue;
         }
         let split: Vec<_> = file.path[root.len()..].split(|&b| b == b'/').collect();
