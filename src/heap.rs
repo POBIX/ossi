@@ -132,7 +132,7 @@ impl Heap {
 
     pub(crate) unsafe fn dealloc_internal(&self, ptr: *mut u8, _: Layout) {
         // unset the used flag for the memory block that starts at ptr
-        (*(ptr.sub(size_of::<Data>()) as *mut Data)).used = true;
+        (*(ptr.sub(size_of::<Data>()) as *mut Data)).used = false;
     }
 }
 
