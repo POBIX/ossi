@@ -1,5 +1,5 @@
 use alloc::{vec::Vec, boxed::Box};
-use core::arch::asm;
+use core::{arch::asm, ptr::NonNull};
 use spin::Mutex;
 
 /// The context of the CPU at the time of process switching.
@@ -11,14 +11,25 @@ pub struct Context {
     pub dir: *mut crate::paging::PageDirectory
 }
 
-#[repr(transparent)]
 #[derive(Clone, Copy)]
-struct ContextPtr(*const Context);
+pub(crate) struct Process {
+    pub ctx: NonNull<Context>,
+    pub data: crate::heap::ProcessHeapData
+}
 
-unsafe impl Sync for ContextPtr {}
-unsafe impl Send for ContextPtr {}
+impl Process {
+    pub fn new(ctx: *mut Context) -> Self {
+        return Process {
+            ctx: NonNull::new(ctx).unwrap(),
+            data: crate::heap::ProcessHeapData::new()
+        };
+    }
+}
 
-static PROCESSES: Mutex<Vec<ContextPtr>> = Mutex::new(Vec::new());
+unsafe impl Sync for Process {}
+unsafe impl Send for Process {}
+
+static PROCESSES: Mutex<Vec<Process>> = Mutex::new(Vec::new());
 static CURR_INDEX: Mutex<usize> = Mutex::new(0);
 
 fn next_index(curr_index: usize, proc_len: usize) -> usize {
@@ -38,8 +49,8 @@ fn prev_index(curr_index: usize, proc_len: usize) -> usize {
 }
 
 /// Switches from the current program to the next one, while updating the context of the current one
-pub(crate) fn next_program(new_context: *const Context) {
-    let new_process: ContextPtr;
+pub(crate) fn next_program(new_context: *mut Context) {
+    let new_process: Process;
     // Since we jump out of this function unbeknownst to the compiler (via the `ret`), we add an artificial scope.
     {
         let mut processes = PROCESSES.lock();
@@ -48,22 +59,22 @@ pub(crate) fn next_program(new_context: *const Context) {
 
         // Assign our context to the previous index
         let replace = prev_index(*curr_index, processes.len());
-        unsafe { drop(Box::from_raw(processes[replace].0 as *mut Context)); } // free previous context
-        processes[replace] = ContextPtr(new_context);
+        unsafe { drop(Box::from_raw(processes[replace].ctx.as_ptr())); } // free previous context
+        processes[replace] = Process::new(new_context);
 
         new_process = processes[*curr_index];
 
         *curr_index = next_index(*curr_index, processes.len());
     }
     unsafe {
-        (*(*new_process.0).dir).switch_to();
+        (*new_process.ctx.as_mut().dir).switch_to();
         asm!(
             // Restore stack
             "mov esp, [edi]",
             // Restore eip
             "push [edi+4]", // Push eip
             "ret", // jmp to the pushed eip
-            in("edi") new_process.0,
+            in("edi") new_process.ctx.as_ptr(),
             options(noreturn)
         );
     }
@@ -81,7 +92,7 @@ pub(crate) fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirector
     let len: usize;
     {
         let mut processes = PROCESSES.lock();
-        processes.push(ContextPtr(ptr));
+        processes.push(Process::new(ptr));
         len = processes.len();
         let mut curr_index = CURR_INDEX.lock();
         *curr_index = next_index(*curr_index , len);
@@ -106,7 +117,8 @@ pub(crate) fn unregister_prev() {
     let mut curr_index = CURR_INDEX.lock();
     let processes = PROCESSES.lock();
     *curr_index = prev_index(*curr_index, processes.len());
-    unsafe { (*(processes[*curr_index].0 as *mut Context)).eip = kill_process as u32; };
+    unsafe { (*(processes[*curr_index].ctx.as_ptr())).eip = kill_process as u32; };
+
     crate::pic::set_mask(0, false);
 }
 
@@ -117,9 +129,11 @@ fn kill_process() {
         let len = processes.len();
         let curr_index = CURR_INDEX.lock();
         processes.remove(prev_index(*curr_index, len));
-        curr = processes[*curr_index].0;
+        curr = processes[*curr_index].ctx.as_ptr();
     }
     next_program(curr);
 }
 
 pub fn has_loaded_processes() -> bool { unsafe { HAS_LOADED_PROCESSES } }
+
+pub fn get_curr_process() -> Process { PROCESSES.lock()[*CURR_INDEX.lock()] }
