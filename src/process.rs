@@ -12,18 +12,16 @@ pub struct Context {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Process {
+pub struct Process {
     pub ctx: NonNull<Context>,
-    pub data: crate::heap::ProcessHeapData
+    // pub data: crate::heap::ProcessHeapData
 }
 
 impl Process {
-    pub fn new(ctx: *mut Context) -> Self {
-        return Process {
-            ctx: NonNull::new(ctx).unwrap(),
-            data: crate::heap::ProcessHeapData::new()
-        };
-    }
+    pub fn new(ctx: *mut Context) -> Self { Process {
+        ctx: NonNull::new(ctx).unwrap(),
+        // data: crate::heap::ProcessHeapData::new()
+    }}
 }
 
 unsafe impl Sync for Process {}
@@ -50,7 +48,7 @@ fn prev_index(curr_index: usize, proc_len: usize) -> usize {
 
 /// Switches from the current program to the next one, while updating the context of the current one
 pub(crate) fn next_program(new_context: *mut Context) {
-    let new_process: Process;
+    let mut new_process: Process;
     // Since we jump out of this function unbeknownst to the compiler (via the `ret`), we add an artificial scope.
     {
         let mut processes = PROCESSES.lock();

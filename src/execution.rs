@@ -110,7 +110,7 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
     let prev_dir = PageDirectory::curr();
     // Create a new page directory for this executable
     let dir = PageDirectory::new();
-    (*dir).map_addresses(paging::HEAP_END + 4096, 0x100_000 + 50*1024*1024, paging::HEAP_END+4096, PageFlags::RW | PageFlags::USER);
+    (*dir).identity_map(paging::HEAP_END + 4096, 50*1024*1024, PageFlags::RW | PageFlags::USER);
     // We switch to the new directory for the copy inside the loop. We switch back to the old one after it ends
     (*dir).switch_to();
 
@@ -120,12 +120,12 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
             continue;
         }
 
-        (*dir).map_addresses(
-            MEM_START,
-            MEM_START + entry.mem_size as usize,
-            entry.virt_addr as usize,
-            PageFlags::RW | PageFlags::USER,
-        );
+        for i in (0..entry.mem_size as usize).step_by(paging::PAGE_SIZE) { (*dir).make_page(
+            entry.virt_addr as usize + i,  // virtual address (where program expects it)
+            MEM_START + i,                  // physical address (where we allocated it)
+            PageFlags::RW | PageFlags::USER
+        ).unwrap();
+}
 
         MEM_START += (entry.mem_size as usize / 0x1000 + 1) * 0x1000;
 
@@ -148,10 +148,9 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
 
     // Map the program's new stack
     const STACK_SIZE: usize = 16384;
-    (*dir).map_addresses(
+    (*dir).identity_map(
         MEM_START,
-        MEM_START + STACK_SIZE,
-        MEM_START,
+        STACK_SIZE,
         PageFlags::USER | PageFlags::RW,
     );
     let stack_top = MEM_START + STACK_SIZE;

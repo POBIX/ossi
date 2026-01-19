@@ -6,20 +6,20 @@ SECTIONS {
 
     .text BLOCK(4K) : ALIGN(4K) {
         *(.multiboot) /* the multiboot section has to go first because it has to be in the first 8KB of the kernel */
-        *(.text) /* the entirety of the code */
+        *(.text*) /* the entirety of the code */
     }
 
     .rodata BLOCK(4K) : ALIGN(4K) {
-        *(.rodata)
+        *(.rodata*)
     }
 
     .data BLOCK(4K) : ALIGN(4K) {
-        *(.data)
+        *(.data*)
     }
 
     .bss BLOCK(4K) : ALIGN(4K) {
         *(COMMON)
-        *(.bss)
+        *(.bss*)
     }
     KERNEL_STACK_TOP = .;
 

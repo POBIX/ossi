@@ -4,6 +4,7 @@ use bitflags::bitflags;
 use core::{mem::{size_of, transmute}, arch::asm};
 
 pub const PAGE_SIZE: usize = 0x1000;
+pub const PAGE_ENTRIES: usize = 1024;
 
 bitfield! {
     #[derive(Clone, Copy)]
@@ -72,12 +73,12 @@ unsafe fn kmalloc(size: usize, align: bool) -> *mut u8 {
 static mut CURR_DIR: *mut PageDirectory = core::ptr::null_mut();
 #[repr(align(0x1000))] // 0x1000=PAGE_SIZE. Rust does not support constants in attributes.
 pub struct PageTable {
-    pages: [Page; 1024],
+    pages: [Page; PAGE_ENTRIES],
 }
 
 #[repr(C, align(0x1000))] // 0x1000=PAGE_SIZE. Rust does not support constants in attributes.
 pub struct PageDirectory {
-    pub page_tables: [u32; 1024]
+    pub page_tables: [u32; PAGE_ENTRIES]
 }
 
 impl PageDirectory {
@@ -87,6 +88,7 @@ impl PageDirectory {
             let dir: *mut Self = Box::into_raw(Box::new_zeroed().assume_init());
             (*dir).map_kernel(PageFlags::RW | PageFlags::USER);
             (*dir).map_self(PageFlags::RW | PageFlags::USER);
+            (*dir).map_recursive(PageFlags::RW | PageFlags::USER);
             dir
         }
     }
@@ -120,34 +122,61 @@ impl PageDirectory {
                 flags
             );
         }
-        // Maps the page directory's last table entry to the directory itself, so that it can be modified from within itself
-        // Weird trick that abuses the fact that page directories and page tables have the same bit structure
+    }
+
+    /// Maps the page directory's last table entry to the directory itself, so that it can be modified from within itself
+    /// Weird trick that abuses the fact that page directories and page tables have the same bit structure
+    fn map_recursive(&mut self, flags: PageFlags) {
         self.page_tables[self.page_tables.len() - 1] = (self as *const _ as u32) | (PageFlags::PRESENT | flags).bits();
         // We can now access the directory from within itself by referencing its last entry
-        // i.e. the virtual address of each table is 0xFFC00000 + whatever
+        // i.e. the virtual address of each table is 0xFFC00000 + table_idx * PAGE_SIZE
+        // and the virtual address of the page directory itself is 0xFFFFF000
     }
 
     /// Maps every virtual address from addr to addr+size to every physical address from addr to addr+size
     /// (Note: you probably want addr and size to be aligned)
     pub unsafe fn identity_map(&mut self, addr: usize, size: usize, flags: PageFlags) {
         for i in (0..size).step_by(PAGE_SIZE) {
-            self.make_page(addr + i, addr + i, flags, true).unwrap();
+            self.make_page(addr + i, addr + i, flags).unwrap_or_else(|_| panic!("{}", addr+i));
+        }
+    }
+
+    /// Returns the virtual address of the directory, assuming a recursive map is set up in index 1023
+    /// or if self != the currently active page directory, that self is mapped in index 1022
+    fn get_dir_ptr(&mut self) -> *mut PageDirectory {
+        if Self::curr().is_null() { // If paging is not yet enabled
+            self
+        } else if core::ptr::eq(self, Self::curr()) {
+            0xFFFFF000 as *mut PageDirectory
+        } else {
+            0xFFBFE000 as *mut PageDirectory
+        }
+    }
+
+    /// Returns the virtual address of a table, assuming a recursive map is set up in index 1023
+    /// or if self != the currently active page directory, that self is mapped in index 1022
+    fn get_table_ptr(&self, table_idx: usize) -> *mut PageTable {
+        if Self::curr().is_null() { // If paging is not yet enabled
+            (self.page_tables[table_idx] & 0xFFFFF000) as *mut PageTable
+        } else {
+            let offset: usize = if core::ptr::eq(self, Self::curr()) { 0xFFC00000 } else { 0xFF800000 };
+            (offset + table_idx * PAGE_SIZE) as *mut PageTable
         }
     }
 
     /// Returns (the index of the page in the page table, the index of the table in the directory, the table), for the given address
-    fn find_table(&self, address: usize) -> (usize, usize, *mut PageTable) {
+    fn find_table(&mut self, address: usize) -> (usize, usize, *mut PageTable) {
         let index = address / PAGE_SIZE;
-        let table_idx = index / self.page_tables.len();
+        let table_idx = index / PAGE_ENTRIES;
 
-        // Find the table's virtual address, using the recursive mapping from map_self
-        let virt: *mut PageTable = if self.page_tables[table_idx] & PageFlags::PRESENT.bits() != 0 {
-            (0xFFC00000 + (table_idx * PAGE_SIZE)) as *mut PageTable
+        let dir: *mut PageDirectory = self.get_dir_ptr();
+        let virt: *mut PageTable = if unsafe {(*dir).page_tables}[table_idx] & PageFlags::PRESENT.bits() != 0 {
+            self.get_table_ptr(table_idx)
         } else {
             core::ptr::null_mut()
         };
 
-        (index % self.page_tables.len(), table_idx, virt)
+        (index % PAGE_ENTRIES, table_idx, virt)
     }
 
     /// Retrieves a reference to a page structure in the virtual memory.
@@ -160,7 +189,8 @@ impl PageDirectory {
         }
     }
 
-    pub unsafe fn invalidate_tlb(virt_addr: usize) {
+    /// Must be called on any change to the paging directory, or else the CPU will use the old cached value
+    unsafe fn invalidate_tlb(virt_addr: usize) {
         asm!(
             "invlpg [{v}]",
             v = in(reg) virt_addr, 
@@ -169,43 +199,55 @@ impl PageDirectory {
     }
 
     /// Allocates a new page table at the specified index and returns its virtual address
-    /// If init=false, self must be the currently active page directory
-    unsafe fn make_table(&mut self, usage: &mut FramesUsage, index: usize, flags: PageFlags, init: bool) -> *mut PageTable {
+    /// If self != Self::curr(), Self::curr()'s 1022nd page table must be set to self.
+    unsafe fn make_table(&mut self, usage: &mut FramesUsage, index: usize, flags: PageFlags) -> *mut PageTable {
         // This function is called from within alloc::alloc. So we can't use that obviously
-        let (new_phys, new_virt, page_dir_virt): (u32, *mut PageTable, *mut [u32; 1024]) = if !init {
-            assert!(core::ptr::eq(self, Self::curr()));
-
+        let new_phys: u32 = if crate::heap::has_init() {
             // Thankfully a PageTable is precisely 4KB, so it fits perfectly inside of a frame. 
             let free_frame: usize = usage.get_free_frame();
             usage.set_frame_used(free_frame, true);
-
-            // See map_self for conversion to table's virtual address and the directory's virtual address
-            ((free_frame * PAGE_SIZE) as u32, (0xFFC00000 + index * PAGE_SIZE) as *mut PageTable, 0xFFFFF000 as *mut [u32; 1024])
+            (free_frame * PAGE_SIZE) as u32
         } else {
             // BUT if we're calling this during the directory initialisation, get_free_frame will return an unmapped address
             // We've reserved just enough memory for kmalloc to use such that we should never run out if we only ever call it
             // during initialisation indeed (kmalloc allocates in identity mapped memory)
-            let both = kmalloc(PAGE_SIZE, true);
-            (both as u32, both as *mut PageTable, core::ptr::addr_of_mut!(self.page_tables))
+            kmalloc(PAGE_SIZE, true) as u32
         };
 
-        (*page_dir_virt)[index] = new_phys | PageFlags::PRESENT.bits() | flags.bits();
+        (*self.get_dir_ptr()).page_tables[index] = new_phys | PageFlags::PRESENT.bits() | flags.bits();
 
-        core::ptr::write_bytes(new_virt, 0, 1); // zero initialise the table
+        let virt: *mut PageTable = self.get_table_ptr(index);
 
-        Self::invalidate_tlb(new_virt as usize); // Tell the CPU we've updated that table entry (lest it use the old cached one)
+        // If we're modifying the active directory, we need to update the cache for the table to become mapped
+        if core::ptr::eq(self, Self::curr()) {
+            Self::invalidate_tlb(virt as usize); 
+        } 
 
-        new_virt
+        core::ptr::write_bytes(virt, 0, 1); // Zero the page table
+
+        virt
     }
 
     /// Creates a new page at virt_addr and maps it to phys_addr, or errors if that virtual address is already mapped
     /// (Does not check whether phys_addr is already used)
-    pub unsafe fn make_page(&mut self, virt_addr: usize, phys_addr: usize, flags: PageFlags, init: bool) -> Result<&mut Page, ()> {
+    pub unsafe fn make_page(&mut self, virt_addr: usize, phys_addr: usize, flags: PageFlags) -> Result<&mut Page, ()> {
         let mut usage = FRAMES_USAGE.lock();
+
+        let in_kernel: bool = !Self::curr().is_null() && !core::ptr::eq(self, Self::curr());
+        if in_kernel {
+            // If we're modifying a different page directory from the active one,
+            // then the page table that we're modifying won't be mapped. So we won't be able to write to it.
+            // To combat this problem, we use a similar trick to map_recursive:
+            let kernel: &mut PageDirectory = Self::curr().as_mut().unwrap();
+            kernel.page_tables[1022] = (self as *const _ as u32) | (PageFlags::PRESENT | PageFlags::RW).bits();
+            Self::invalidate_tlb(0xFF800000);
+            Self::invalidate_tlb(0xFFBFE000);
+            // We can now access the page table by 0xFF800000 + table_index * PAGE_SIZE.
+        }
 
         let (index, table_idx, curr_table) = self.find_table(virt_addr);
         let table: *mut PageTable = // Allocate the table if it doesn't already exist
-            if curr_table.is_null() { self.make_table(&mut usage, table_idx, flags, init) } 
+            if curr_table.is_null() { self.make_table(&mut usage, table_idx, flags) } 
             else { curr_table };
 
         // Assign the page (it already exists as it's been either zero initialised or used then freed)
@@ -217,9 +259,36 @@ impl PageDirectory {
         page.set_rw(flags.contains(PageFlags::RW));
         usage.set_page_frame(page, phys_addr / PAGE_SIZE);
 
-        Self::invalidate_tlb(virt_addr); // Tell the CPU we've updated that page (lest it use the old cached one)
+        Self::invalidate_tlb(virt_addr); 
+
+        if in_kernel {
+            // We're done modifying, unmap it now
+            let kernel: &mut PageDirectory = Self::curr().as_mut().unwrap();
+            kernel.page_tables[1022] = 0;
+            Self::invalidate_tlb(0xFF800000);
+            Self::invalidate_tlb(0xFFBFE000);
+        }
 
         Ok(page)
+    }
+
+    // Returns the first free virtual address, or None if none is available
+    pub fn get_free_page(&mut self) -> Option<usize> {
+        let tables: &[u32; PAGE_ENTRIES] = unsafe { &(*self.get_dir_ptr()).page_tables };
+        for i in 0..PAGE_ENTRIES {
+            let t = (tables[i] & 0xFFFFF000) as *mut PageTable;
+            if t.is_null() {
+                // If the table is unallocated, it means every page in it is free
+                return Some(i * PAGE_ENTRIES * PAGE_SIZE);
+            }
+
+            for (j, page) in unsafe { (*t).pages }.iter().enumerate() {
+                if !page.present() {
+                    return Some((i * PAGE_ENTRIES + j) * PAGE_SIZE);
+                }
+            }
+        }
+        None
     }
 
     pub unsafe fn switch_to(&mut self) {
@@ -240,8 +309,8 @@ impl PageDirectory {
 impl Drop for PageDirectory {
     fn drop(&mut self) {
         let mut usage = FRAMES_USAGE.lock();
-        
-        // Don't free the last table, as it points at the directory (see map_self)
+ 
+        // Don't free the last table, as it points at the directory (see map_recursive)
         for table in self.page_tables.iter().take(self.page_tables.len() - 1) {
             let t = (table & 0xFFFFF000) as usize; // physical address of the table
 
@@ -282,7 +351,7 @@ impl FramesUsage {
     /// Returns the index of the first unused frame
     pub fn get_free_frame(&self) -> usize {
         // note: this is performance critical code. .into_iter().enumerate() is about 3 times slower.
-        for i in 0..self.0.len() {
+        for i in unsafe { (HEAP_END / PAGE_SIZE).div_ceil(32) }..self.0.len() { // We only start checking at HEAP_END since everything before is guaranteed to be in use
             let frame = self.0[i];
             // if every bit in frame is set, we don't need to check each bit individually
             if frame == 0xFFFFFFFF {
@@ -331,12 +400,12 @@ pub fn init() -> usize {
 
     unsafe {
         // The only instances of using kmalloc after this are when allocating a single PageTable.
-        // Theoretically there can only be 1024 of them, so
-        HEAP_END = PLACEMENT_ADDR + size_of::<PageTable>() * 1024;
+        // Theoretically there can only be PAGE_ENTRIES of them, so
+        HEAP_END = PLACEMENT_ADDR + size_of::<PageTable>() * PAGE_ENTRIES;
     }
 
     kernel_dir.map_kernel(PageFlags::RW);
-    kernel_dir.map_self(PageFlags::RW);
+    kernel_dir.map_recursive(PageFlags::RW);
 
     unsafe {
         // Activate the directory and actually enable paging CPU side
