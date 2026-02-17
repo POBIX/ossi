@@ -5,6 +5,7 @@
 #![feature(asm_const)]
 #![feature(naked_functions)]
 #![feature(new_uninit)]
+#![feature(inline_const)]
 #![no_std]
 #![no_main]
 
