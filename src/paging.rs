@@ -300,7 +300,7 @@ impl PageDirectory {
     }
 
     /// Returns the first free virtual address between from and to (page table space, 0..1024), or None if none is available
-    fn get_free_page(&mut self, from: usize, to: usize) -> Option<usize> {
+    pub fn get_free_page(&mut self, from: usize, to: usize) -> Option<usize> {
         let tables: &[u32; PAGE_ENTRIES] = unsafe { &(*self.get_dir_ptr()).page_tables };
         for i in from..to {
             let t = (tables[i] & 0xFFFFF000) as *mut PageTable;

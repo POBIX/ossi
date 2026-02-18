@@ -110,7 +110,7 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
     let prev_dir = PageDirectory::curr();
     // Create a new page directory for this executable
     let dir = PageDirectory::new();
-    (*dir).identity_map(paging::HEAP_END + 4096, 50*1024*1024, PageFlags::RW | PageFlags::USER);
+    (*dir).identity_map(paging::HEAP_END, 50*1024*1024, PageFlags::RW | PageFlags::USER);
     // We switch to the new directory for the copy inside the loop. We switch back to the old one after it ends
     (*dir).switch_to();
 
