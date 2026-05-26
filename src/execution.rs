@@ -108,6 +108,7 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
         unsafe { core::slice::from_raw_parts(p_header_arr, header.prog_header_len as usize) };
 
     let prev_dir = PageDirectory::curr();
+    PageDirectory::switch_to_kernel();
     // Create a new page directory for this executable
     let dir = PageDirectory::new();
     (*dir).identity_map(paging::HEAP_END, 50*1024*1024, PageFlags::RW | PageFlags::USER);

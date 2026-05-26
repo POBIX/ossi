@@ -76,6 +76,7 @@ unsafe fn kmalloc(size: usize, align: bool) -> *mut u8 {
 }
 
 static mut CURR_DIR: *mut PageDirectory = core::ptr::null_mut();
+static mut KERNEL_DIR: *mut PageDirectory = core::ptr::null_mut();
 #[repr(align(0x1000))] // 0x1000=PAGE_SIZE. Rust does not support constants in attributes.
 pub struct PageTable {
     pages: [Page; PAGE_ENTRIES],
@@ -140,7 +141,7 @@ impl PageDirectory {
 
     fn map_tables(&mut self, flags: PageFlags) {
         let mut usage = FRAMES_USAGE.lock();
-        for i in 2..(TABLES_SIZE + 2){
+        for i in 2..(TABLES_SIZE + 2) {
             unsafe {
                 self.make_table(&mut usage, PAGE_ENTRIES - i, flags, true);
             }
@@ -237,7 +238,7 @@ impl PageDirectory {
         // This function is called from within alloc::alloc. So we can't use that obviously
         let new_phys: u32 = if crate::heap::has_init() {
             // Thankfully a PageTable is precisely 4KB, so it fits perfectly inside of a frame. 
-            let free_frame: usize = usage.get_free_frame();
+            let free_frame: usize = usage.get_free_frame().expect("Out of memory!");
             usage.set_frame_used(free_frame, true);
             (free_frame * PAGE_SIZE) as u32
         } else {
@@ -326,6 +327,10 @@ impl PageDirectory {
         );
     }
 
+    pub unsafe fn switch_to_kernel() {
+        (*KERNEL_DIR).switch_to();
+    }
+
     // Not marking this function unsafe since there will always be an active page directory (excluding the init() function).
     // If you freed a page directory while it was in use your code is going to crash immediately anyways.
     pub fn curr() -> *mut PageDirectory {
@@ -382,8 +387,8 @@ impl FramesUsage {
         }
     }
 
-    /// Returns the index of the first unused frame
-    pub fn get_free_frame(&self) -> usize {
+    /// Returns the index of the first unused frame, or None if none is available
+    pub fn get_free_frame(&self) -> Option<usize> {
         // note: this is performance critical code. .into_iter().enumerate() is about 3 times slower.
         for i in unsafe { (HEAP_END / PAGE_SIZE).div_ceil(32) }..self.0.len() { // We only start checking at HEAP_END since everything before is guaranteed to be in use
             let frame = self.0[i];
@@ -393,11 +398,11 @@ impl FramesUsage {
             }
             for j in 0..32 {
                 if frame & (0x1 << j) == 0 {
-                    return i * 32 + j;
+                    return Some(i * 32 + j);
                 }
             }
         }
-        panic!("All frames are used");
+        None
     }
 
     /// Sets the page's frame to frame
@@ -454,6 +459,10 @@ pub fn init() -> usize {
     }
 
     kernel_dir.map_tables(PageFlags::RW);
+
+    unsafe {
+        KERNEL_DIR = kernel_dir;
+    }
 
     // We've used the beginning of the "proper" heap with kmalloc, and we don't want to override anything.
     // Returning the first free address is the simplest solution.

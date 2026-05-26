@@ -260,11 +260,11 @@ fn print_syscall(args: core::fmt::Arguments) {
 }
 
 unsafe fn alloc(ptr: &mut *mut u8, layout: core::alloc::Layout) {
-    *ptr = crate::heap::HEAP.alloc_internal(layout);
+    *ptr = crate::heap::HEAP.0.get().unwrap().alloc_internal(layout);
 }
 
 unsafe fn dealloc(ptr: *mut u8, layout: core::alloc::Layout) {
-    crate::heap::HEAP.dealloc_internal(ptr, layout);
+    crate::heap::HEAP.0.get().unwrap().dealloc_internal(ptr, layout);
 }
 
 fn is_key_pressed(out: &mut bool, key: crate::keyboard::Key) {

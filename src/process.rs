@@ -14,13 +14,15 @@ pub struct Context {
 #[derive(Clone, Copy)]
 pub struct Process {
     pub ctx: NonNull<Context>,
-    // pub data: crate::heap::ProcessHeapData
+    pub heap_start: usize,
+    pub heap_size: usize
 }
 
 impl Process {
     pub fn new(ctx: *mut Context) -> Self { Process {
         ctx: NonNull::new(ctx).unwrap(),
-        // data: crate::heap::ProcessHeapData::new()
+        heap_start: unsafe { crate::paging::HEAP_END },
+        heap_size: 0
     }}
 }
 
