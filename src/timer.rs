@@ -16,6 +16,11 @@ pub fn init() {
 
 #[naked]
 extern "x86-interrupt" fn on_tick() {
+    // Force preservation of state.
+    // Even though the "x86-interrupt" ABI preserves all used registers, some registers are not actually used
+    // by the function. So they won't be preserved. Which is bad.
+    // This causes some registers to be pushed twice, but there doesn't seem to be a simple fix.
+
     unsafe {
         asm!(
             "pushfd",
@@ -34,11 +39,6 @@ extern "x86-interrupt" fn on_tick() {
 #[allow(named_asm_labels)]
 #[no_mangle]
 fn on_tick_internal() {
-    // Force preservation of state.
-    // Even though the "x86-interrupt" ABI preserves all used registers, some registers are not actually used
-    // by the function. So they won't be preserved. Which is bad.
-    // This causes some registers to be pushed twice, but there doesn't seem to be a simple fix.
-
     crate::interrupts::disable();
     unsafe { TIMER += 1; }
     ON_TICK.lock().invoke(());

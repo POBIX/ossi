@@ -342,6 +342,18 @@ impl PageDirectory {
         // This is because userspace directories shouldn't have the power to modify any directory other than their own
         !Self::curr().is_null() && !core::ptr::eq(self, Self::curr())
     }
+
+    /// Returns the first free virtual address between from and to (page table space, 0..1024) and
+    /// maps it to some free physical address, or panics if out of memory
+    pub fn map_new_page(&mut self, from: usize, to: usize, flags: PageFlags) -> usize {
+        let page: usize = self.get_free_page(from, to).expect("Out of virtual memory!");
+        let frame: usize = FRAMES_USAGE.lock().get_free_frame().expect("Out of memory!") * PAGE_SIZE;
+        // Map them and interpret as slab
+        unsafe {
+            self.make_page(page, frame, flags).unwrap();
+        }
+        page
+    }
     
 }
 

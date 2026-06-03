@@ -187,3 +187,50 @@ unsafe fn setup_idt() {
     int_set_err!(0x1D, vmm_communication_exception);
     int_set_err!(0x1E, security_exception);
 }
+
+/// Disables interrupts if they were enabled on creation; restores to previous state on drop
+pub struct InterruptGuard {
+    enabled: bool
+}
+
+impl InterruptGuard {
+    pub fn new() -> Self {
+        let mut enabled = false;
+        crate::syscall::AreInterruptsEnabled::call(&mut enabled);
+        if enabled {
+            crate::syscall::DisableInterrupts::call();
+        }
+        Self { enabled }
+    }
+}
+
+impl Drop for InterruptGuard {
+    fn drop(&mut self) {
+        if self.enabled {
+            crate::syscall::EnableInterrupts::call();
+        }
+    }
+}
+
+/// Non-syscall version of InterruptGuard
+pub(crate) struct KernelInterruptGuard {
+    enabled: bool
+}
+
+impl KernelInterruptGuard {
+    pub fn new() -> Self {
+        let mut enabled = is_enabled();
+        if enabled {
+            disable();
+        }
+        Self { enabled }
+    }
+}
+
+impl Drop for KernelInterruptGuard {
+    fn drop(&mut self) {
+        if self.enabled {
+            enable();
+        }
+    }
+}
