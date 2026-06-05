@@ -214,7 +214,7 @@ impl PageDirectory {
     /// Must be called on kernel. unmap_kernel_table must be called after end of usage.
     fn map_kernel_table(&mut self, addr: u32, flags: PageFlags) -> *mut PageTable {
         // So we map it to one of the reserved pages in between TABLES_START and the end of memory
-        let page: usize = self.get_free_page(PAGE_ENTRIES - 1 - TABLES_SIZE, PAGE_ENTRIES - 1).unwrap();
+        let page: usize = self.get_free_pages(1, PAGE_ENTRIES - 1 - TABLES_SIZE, PAGE_ENTRIES - 1).unwrap();
         let (i, _, temp_table) = self.find_table(page);
         unsafe {
             (*temp_table).pages[i] = Page(addr | PageFlags::PRESENT.bits() | flags.bits());
@@ -300,19 +300,32 @@ impl PageDirectory {
         Ok(page)
     }
 
-    /// Returns the first free virtual address between from and to (page table space, 0..1024), or None if none is available
-    pub fn get_free_page(&mut self, from: usize, to: usize) -> Option<usize> {
+    /// Returns the first virtual address that has `pages` free consecutive pages after it,
+    /// searching between from and to (page table space, 0..1024),
+    /// or returns None if none is available
+    pub fn get_free_pages(&mut self, pages: usize, from: usize, to: usize) -> Option<usize> {
         let tables: &[u32; PAGE_ENTRIES] = unsafe { &(*self.get_dir_ptr()).page_tables };
+        let mut sum: usize = 0;
+        let mut start: Option<usize> = None;
         for i in from..to {
             let t = (tables[i] & 0xFFFFF000) as *mut PageTable;
             if t.is_null() {
                 // If the table is unallocated, it means every page in it is free
-                return Some(i * PAGE_ENTRIES * PAGE_SIZE);
-            }
-
-            for (j, page) in unsafe { (*t).pages }.iter().enumerate() {
-                if !page.present() {
-                    return Some((i * PAGE_ENTRIES + j) * PAGE_SIZE);
+                start.get_or_insert(i * PAGE_ENTRIES * PAGE_SIZE);
+                sum += PAGE_ENTRIES;
+                if sum >= pages {
+                    return start;
+                }
+            } else {
+                for (j, page) in unsafe { (*t).pages }.iter().enumerate() {
+                    if !page.present() {
+                        start.get_or_insert((i * PAGE_ENTRIES + j) * PAGE_SIZE);
+                        sum += 1;
+                        if sum >= pages { return start; }
+                    } else {
+                        start = None; 
+                        sum = 0;
+                    }
                 }
             }
         }
@@ -343,18 +356,33 @@ impl PageDirectory {
         !Self::curr().is_null() && !core::ptr::eq(self, Self::curr())
     }
 
-    /// Returns the first free virtual address between from and to (page table space, 0..1024) and
-    /// maps it to some free physical address, or panics if out of memory
-    pub fn map_new_page(&mut self, from: usize, to: usize, flags: PageFlags) -> usize {
-        let page: usize = self.get_free_page(from, to).expect("Out of virtual memory!");
-        let frame: usize = FRAMES_USAGE.lock().get_free_frame().expect("Out of memory!") * PAGE_SIZE;
-        // Map them and interpret as slab
-        unsafe {
-            self.make_page(page, frame, flags).unwrap();
+    /// Maps the first virtual address that has `pages` free consecutive pages after it to some
+    /// physical addresses, searching between from and to (page table space, 0..1024),
+    /// or panics if out of memory
+    pub fn map_new_pages(&mut self, pages: usize, from: usize, to: usize, flags: PageFlags) -> usize {
+        let usage = FRAMES_USAGE.lock();
+        let start: usize = self.get_free_pages(pages, from, to).expect("Out of virtual memory!");
+        for i in 0..pages {
+            unsafe {
+                self.make_page(
+                    start + i,
+                    usage.get_free_frame().expect("Out of memory!") * PAGE_SIZE,
+                    flags
+                ).unwrap();
+            }
         }
-        page
+        start
     }
-    
+
+    /// Unmaps `page`, also frees the frame it was previously mapped to if `free` is true
+    pub fn unmap(&mut self, page: usize, free: bool) {
+        let (i, _, table) = self.find_table(page);
+        unsafe {
+            (*table).pages[i] = Page(0);
+            if free { FRAMES_USAGE.lock().free_frame(&mut (*table).pages[i]); }
+            Self::invalidate_tlb(page);
+        }
+    }
 }
 
 impl Drop for PageDirectory {
@@ -427,6 +455,7 @@ impl FramesUsage {
         page.set_frame(frame as u32);
     }
 
+    /// Frees the frame page is mapped to and unsets it. TLB must be invalidated after calling this
     pub unsafe fn free_frame(&mut self, page: &mut Page) {
         if page.frame() == 0 {
             return; // there's nothing to free!

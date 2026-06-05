@@ -219,7 +219,7 @@ pub(crate) struct KernelInterruptGuard {
 
 impl KernelInterruptGuard {
     pub fn new() -> Self {
-        let mut enabled = is_enabled();
+        let enabled = is_enabled();
         if enabled {
             disable();
         }

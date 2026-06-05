@@ -1,3 +1,4 @@
+//! TODO: slabs need to be per-process :(. Also alignment
 //! Brief overview of how allocation works:
 //! The page directory keeps track of which pages are mapped and which are not.
 //! For a mapped page, there are two possibilites:
@@ -49,7 +50,7 @@ impl Heap {
         } else {
             // If we have then we make a new page and put this metadata at its top
             let dir: &mut PageDirectory = unsafe { PageDirectory::curr().as_mut().unwrap() };
-            dir.map_new_page(self.space_start, self.space_end, PageFlags::USER | PageFlags::RW)
+            dir.map_new_pages(1, self.space_start, self.space_end, PageFlags::USER | PageFlags::RW)
                 as *mut SlabMetadata
         };
 
@@ -74,7 +75,7 @@ impl Heap {
     fn create_slab(&mut self, block_size: u16) -> *mut SlabMetadata {
         // Make new page that our slab will live in
         let dir: &mut PageDirectory = unsafe { PageDirectory::curr().as_mut().unwrap() };
-        let mut node = dir.map_new_page(self.space_start, self.space_end, PageFlags::USER | PageFlags::RW) as *mut SlabNode;
+        let mut node = dir.map_new_pages(1, self.space_start, self.space_end, PageFlags::USER | PageFlags::RW) as *mut SlabNode;
         let metadata: *mut SlabMetadata = self.create_metadata(block_size, node);
 
         // Make free slots (all of them since we just created the slab) point at the next free slot
@@ -128,7 +129,7 @@ impl Heap {
             // This wasn't a slab allocation (too big), we just need to unmap its pages
             let dir: &mut PageDirectory = PageDirectory::curr().as_mut().unwrap();
             for i in 0..(layout.size().div_ceil(PAGE_SIZE)) {
-                dir.unmap(ptr as usize / PAGE_SIZE + i);
+                dir.unmap(ptr as usize / PAGE_SIZE + i, true);
             }
         } else {
             // Go through each slab and see if our pointer is in it
