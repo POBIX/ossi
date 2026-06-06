@@ -133,7 +133,7 @@ impl PageDirectory {
     /// Maps the page directory's last table entry to the directory itself, so that it can be modified from within itself
     /// Weird trick that abuses the fact that page directories and page tables have the same bit structure
     fn map_recursive(&mut self, flags: PageFlags) {
-        self.page_tables[self.page_tables.len() - 1] = (self as *const _ as u32) | (PageFlags::PRESENT | flags).bits();
+        self.page_tables[self.page_tables.len() - 1] = self.get_phys_addr() as u32 | (PageFlags::PRESENT | flags).bits();
         // We can now access the directory from within itself by referencing its last entry
         // i.e. the virtual address of each table is 0xFFC00000 + table_idx * PAGE_SIZE
         // and the virtual address of the page directory itself is 0xFFFFF000
@@ -332,16 +332,27 @@ impl PageDirectory {
         None
     }
 
+    fn get_phys_addr(&self) -> usize {
+        unsafe {
+            if CURR_DIR.is_null() {
+                self as *const _ as usize
+            } else {
+                (*CURR_DIR).get_page(self as *const _ as usize)
+                .expect("Attempted to switch to unmapped page directory!").frame() as usize * PAGE_SIZE
+            }
+        }
+    }
+
     pub unsafe fn switch_to(&mut self) {
-        CURR_DIR = self;
         asm!(
             "mov cr3, {r:e}",
-            r = in(reg) (&self.page_tables).as_ptr()
+            r = in(reg) self.get_phys_addr()
         );
+        CURR_DIR = self;
     }
 
     pub unsafe fn switch_to_kernel() {
-        (*KERNEL_DIR).switch_to();
+       (*KERNEL_DIR).switch_to();
     }
 
     // Not marking this function unsafe since there will always be an active page directory (excluding the init() function).
@@ -349,7 +360,7 @@ impl PageDirectory {
     pub fn curr() -> *mut PageDirectory {
         unsafe { CURR_DIR }
     }
-    
+
     fn in_kernel(&self) -> bool {
         // If any page directory other than self is active, we take that to mean the kernel directory is the active one
         // This is because userspace directories shouldn't have the power to modify any directory other than their own
@@ -360,13 +371,13 @@ impl PageDirectory {
     /// physical addresses, searching between from and to (page table space, 0..1024),
     /// or panics if out of memory
     pub fn map_new_pages(&mut self, pages: usize, from: usize, to: usize, flags: PageFlags) -> usize {
-        let usage = FRAMES_USAGE.lock();
         let start: usize = self.get_free_pages(pages, from, to).expect("Out of virtual memory!");
         for i in 0..pages {
+            let frame: usize = FRAMES_USAGE.lock().get_free_frame().expect("Out of memory!") * PAGE_SIZE;
             unsafe {
                 self.make_page(
-                    start + i,
-                    usage.get_free_frame().expect("Out of memory!") * PAGE_SIZE,
+                    start + i * PAGE_SIZE,
+                    frame,
                     flags
                 ).unwrap();
             }

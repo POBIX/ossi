@@ -50,21 +50,20 @@ fn on_tick_internal() {
         return;
     }
 
-    let context = Box::new(crate::process::Context { esp: 0, eip: 0, dir: core::ptr::null_mut() });
-    let context_ptr = Box::into_raw(context);
+    let mut context = crate::process::Context { esp: 0, eip: 0, dir: core::ptr::null_mut() };
     unsafe {
         asm!(
             "mov [ebx], esp", // undo push
             "lea eax, end_of_on_tick",
             "mov [ebx+4], eax",
             "mov [ebx+8], ecx",
-            in("ebx") context_ptr,
+            in("ebx") &mut context,
             in("ecx") PageDirectory::curr(),
             out("eax") _ // clobber
         );
     }
 
-    crate::process::next_program(context_ptr); // jumps out of this function
+    crate::process::next_program(context); // jumps out of this function
 
     unsafe {
         asm!(

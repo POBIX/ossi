@@ -1,10 +1,11 @@
-use alloc::{vec::Vec, boxed::Box};
-use core::{arch::asm, ptr::NonNull};
+use alloc::vec::Vec;
+use core::{arch::asm, sync::atomic::{AtomicBool, Ordering}};
 use spin::Mutex;
 
 /// The context of the CPU at the time of process switching.
 /// These are the only registers we need since the interrupt handler saves the rest of the state based on the stack.
 #[repr(C, packed)]
+#[derive(Clone, Copy)]
 pub struct Context {
     pub esp: u32,
     pub eip: u32,
@@ -13,14 +14,14 @@ pub struct Context {
 
 #[derive(Clone, Copy)]
 pub struct Process {
-    pub ctx: NonNull<Context>,
+    pub ctx: Context,
     pub heap_start: usize,
     pub heap_size: usize
 }
 
 impl Process {
-    pub fn new(ctx: *mut Context) -> Self { Process {
-        ctx: NonNull::new(ctx).unwrap(),
+    pub fn new(ctx: Context) -> Self { Process {
+        ctx,
         heap_start: unsafe { crate::paging::HEAP_END },
         heap_size: 0
     }}
@@ -49,32 +50,29 @@ fn prev_index(curr_index: usize, proc_len: usize) -> usize {
 }
 
 /// Switches from the current program to the next one, while updating the context of the current one
-pub(crate) fn next_program(new_context: *mut Context) {
-    let mut new_process: Process;
+pub(crate) fn next_program(new_context: Context) {
+    let new_process: Process;
     // Since we jump out of this function unbeknownst to the compiler (via the `ret`), we add an artificial scope.
     {
         let mut processes = PROCESSES.lock();
         if processes.len() == 0 { return; }
         let mut curr_index = CURR_INDEX.lock();
 
-        // Assign our context to the previous index
-        let replace = prev_index(*curr_index, processes.len());
-        unsafe { drop(Box::from_raw(processes[replace].ctx.as_ptr())); } // free previous context
-        processes[replace] = Process::new(new_context);
+        let l = processes.len();
+        processes[prev_index(*curr_index, l)] = Process::new(new_context);
 
         new_process = processes[*curr_index];
 
         *curr_index = next_index(*curr_index, processes.len());
     }
     unsafe {
-        (*new_process.ctx.as_mut().dir).switch_to();
+        (*new_process.ctx.dir).switch_to();
         asm!(
-            // Restore stack
-            "mov esp, [edi]",
-            // Restore eip
-            "push [edi+4]", // Push eip
+            "mov esp, {stack}",
+            "push {ip}",
             "ret", // jmp to the pushed eip
-            in("edi") new_process.ctx.as_ptr(),
+            stack = in(reg) new_process.ctx.esp,
+            ip = in(reg) new_process.ctx.eip,
             options(noreturn)
         );
     }
@@ -86,13 +84,12 @@ pub(crate) fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirector
     // Since we lock PROCESSES, we can't switch programs while registering one.
     crate::pic::set_mask(0, true);
 
-    let context = Box::new(Context { esp, eip, dir });
-    let ptr = Box::into_raw(context);
+    let context = Context { esp, eip, dir };
 
     let len: usize;
     {
         let mut processes = PROCESSES.lock();
-        processes.push(Process::new(ptr));
+        processes.push(Process::new(context));
         len = processes.len();
         let mut curr_index = CURR_INDEX.lock();
         *curr_index = next_index(*curr_index , len);
@@ -104,7 +101,7 @@ pub(crate) fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirector
     // or else it will free the context we just created and never enter the program.
     if len == 1 {
         // Since we had to disable the timer, user programs must manually unmask the timer at their start.
-        next_program(ptr);
+        next_program(context);
     }
     // Otherwise the task scheduler will automatically call it.
     crate::pic::set_mask(0, false);
@@ -115,9 +112,9 @@ pub(crate) fn unregister_prev() {
     crate::pic::set_mask(0, true);
 
     let mut curr_index = CURR_INDEX.lock();
-    let processes = PROCESSES.lock();
+    let mut processes = PROCESSES.lock();
     *curr_index = prev_index(*curr_index, processes.len());
-    unsafe { (*(processes[*curr_index].ctx.as_ptr())).eip = kill_process as u32; };
+    processes[*curr_index].ctx.eip = kill_process as u32;
 
     crate::pic::set_mask(0, false);
 }
@@ -129,7 +126,7 @@ fn kill_process() {
         let len = processes.len();
         let curr_index = CURR_INDEX.lock();
         processes.remove(prev_index(*curr_index, len));
-        curr = processes[*curr_index].ctx.as_ptr();
+        curr = processes[*curr_index].ctx;
     }
     next_program(curr);
 }

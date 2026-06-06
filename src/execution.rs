@@ -121,12 +121,13 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
             continue;
         }
 
-        for i in (0..entry.mem_size as usize).step_by(paging::PAGE_SIZE) { (*dir).make_page(
-            entry.virt_addr as usize + i,  // virtual address (where program expects it)
-            MEM_START + i,                  // physical address (where we allocated it)
-            PageFlags::RW | PageFlags::USER
-        ).unwrap();
-}
+        for i in (0..entry.mem_size as usize).step_by(paging::PAGE_SIZE) {
+            (*dir).make_page(
+                entry.virt_addr as usize + i,  // virtual address (where program expects it)
+                MEM_START + i,                  // physical address (where we allocated it)
+                PageFlags::RW | PageFlags::USER
+            ).unwrap();
+        }
 
         MEM_START += (entry.mem_size as usize / 0x1000 + 1) * 0x1000;
 

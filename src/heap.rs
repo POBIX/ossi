@@ -16,7 +16,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use alloc::alloc::{GlobalAlloc, Layout};
 use spin::Mutex;
 
-use crate::{paging::{PageDirectory, PAGE_SIZE, PageFlags}, interrupts::KernelInterruptGuard};
+use crate::{paging::{PageDirectory, PAGE_SIZE, PageFlags, PAGE_ENTRIES}, interrupts::KernelInterruptGuard};
 
 pub(crate) struct Heap {
     space_start: usize,
@@ -175,8 +175,8 @@ pub(crate) static HEAP: GlobalHeap = GlobalHeap(Mutex::new(Heap {
 
 pub(crate) unsafe fn init(space_start: usize, size: usize) {
     let mut heap = HEAP.0.lock();
-    heap.space_start = space_start;
-    heap.space_end = space_start + size;
+    heap.space_start = space_start / PAGE_SIZE / PAGE_ENTRIES;
+    heap.space_end = (space_start + size).div_ceil(PAGE_SIZE).div_ceil(PAGE_ENTRIES);
     HAS_INIT.store(true, Ordering::Relaxed);
 }
 
