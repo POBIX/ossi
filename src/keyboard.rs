@@ -356,7 +356,7 @@ pub(crate) fn set_key(key: Key, pressed: bool) {
 }
 
 pub(crate) fn is_caps_lock_active() -> bool {
-    // we can't accept keyboard input while checking the value (what if you press caps lock while reading it?)
+    // we can't accept keyboard input while checking (what if you press caps lock while reading it?)
     pic::set_mask(1, true);
     let ret = *CAPS_LOCK.lock();
     pic::set_mask(1, false);

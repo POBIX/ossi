@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
-use core::{arch::asm, sync::atomic::{AtomicBool, Ordering}};
+use core::{arch::asm, sync::atomic::Ordering};
 use spin::Mutex;
 
-/// The context of the CPU at the time of process switching.
-/// These are the only registers we need since the interrupt handler saves the rest of the state based on the stack.
+/// The context of the CPU at the time of process switching. These are the only registers we need
+/// since the interrupt handler saves the rest of the state based on the stack.
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct Context {
@@ -22,7 +22,7 @@ pub struct Process {
 impl Process {
     pub fn new(ctx: Context) -> Self { Process {
         ctx,
-        heap_start: unsafe { crate::paging::HEAP_END },
+        heap_start: crate::paging::HEAP_END.load(Ordering::Relaxed),
         heap_size: 0
     }}
 }
@@ -52,7 +52,7 @@ fn prev_index(curr_index: usize, proc_len: usize) -> usize {
 /// Switches from the current program to the next one, while updating the context of the current one
 pub(crate) fn next_program(new_context: Context) {
     let new_process: Process;
-    // Since we jump out of this function unbeknownst to the compiler (via the `ret`), we add an artificial scope.
+    // We jump out of this function unbeknownst to the compiler (`ret`), so we add our own scope.
     {
         let mut processes = PROCESSES.lock();
         if processes.len() == 0 { return; }
@@ -100,7 +100,7 @@ pub(crate) fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirector
     // If this is the first program being run, we need to manually call next_program,
     // or else it will free the context we just created and never enter the program.
     if len == 1 {
-        // Since we had to disable the timer, user programs must manually unmask the timer at their start.
+        // We had to disable the timer, so user programs must manually unmask the timer at the start
         next_program(context);
     }
     // Otherwise the task scheduler will automatically call it.

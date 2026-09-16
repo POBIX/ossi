@@ -6,7 +6,8 @@ use crate::{paging::{self, PageFlags, PageDirectory}, io::Read};
 
 /// Runs the compiled code in program, starting at main_offset,
 /// and returns the error code returned by the program in EAX.
-unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32, new_dir: *mut PageDirectory, prev_dir: *mut PageDirectory) {
+unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32,
+                               new_dir: *mut PageDirectory, prev_dir: *mut PageDirectory) {
     // push the previous stack onto the new one (for recovery after the program's execution)
     asm!(
         "mov [{new_esp}], esp",
@@ -80,10 +81,13 @@ struct ElfProgramHeader {
     align: u32,
 }
 
-// Just a random address sometime after the end of the heap and before the kernel (calculated by hand).
+// Just a random address sometime after the end of the heap and before the kernel (computed by hand)
 // TODO: work on an actual heap that isn't hardcoded so this won't be a thing.
 static mut MEM_START: usize = 0x4_400_000;
 
+/// Runs the ELF program whose raw bytes are contained in program
+/// The kernel page directory must be active *before* running this function,
+/// and program must live on the kernel heap
 pub(crate) unsafe fn run_program(program: &[u8]) {
     let header_bytes = &program[..core::mem::size_of::<ElfHeader>()];
     let header: &ElfHeader = unsafe { core::mem::transmute(header_bytes.as_ptr()) };
@@ -111,8 +115,11 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
     PageDirectory::switch_to_kernel();
     // Create a new page directory for this executable
     let dir = PageDirectory::new();
-    (*dir).identity_map(paging::HEAP_END, 50*1024*1024, PageFlags::RW | PageFlags::USER);
-    // We switch to the new directory for the copy inside the loop. We switch back to the old one after it ends
+    (*dir).identity_map(
+        header as *const _ as usize, core::mem::size_of::<ElfHeader>(),
+        PageFlags::RW | PageFlags::USER
+    );
+    // We switch to the new directory for the copy in the loop, then back to the old one
     (*dir).switch_to();
 
     // Load each entry in the program header into memory

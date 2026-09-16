@@ -1,7 +1,7 @@
 ; i decided to use GRUB for the time being since i couldn't get the bootloader to work for kernels > 480KB
 ; (you'd have to switch back and forth between real and protected mode multiple times, and that's just too much effort.)
 ; (the kernel size jumps to 700KB as soon as any function from the rust std is used)
-; but this is just temporary. after i figure out hardware drivers and interrupts and stuff, a custom bootloader will return.
+; but this is just temporary. after i figure out hardware drivers and interrupts etc., a custom bootloader will return.
 
 ; based off https://wiki.osdev.org/Bare_Bones#Booting_the_Operating_System
 
@@ -15,8 +15,8 @@ MAGIC equ 0x1BADB002 ; magic number that lets bootloader find the header
 CHECKSUM equ -(MAGIC + FLAGS)
 
 ; the multiboot header informs the bootloader that this is a kernel.
-; the bootloader is going to search for this header, and it's in its own section
-; so that we can force it to be inside the first 8KB of the kernel (the bootloader will only search for the header there)
+; the bootloader is going to search for this header in the first 8KB, and it's in its own section
+; so that we can force it to be inside the first 8KB of the kernel
 section .multiboot
 align 4
   dd MAGIC

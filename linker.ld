@@ -21,8 +21,9 @@ SECTIONS {
         *(COMMON)
         *(.bss*)
     }
-    KERNEL_STACK_TOP = .;
+    KERNEL_STACK_SIZE = 16K;
+    KERNEL_STACK_TOP = . + KERNEL_STACK_SIZE;
 
     /* the address at the end of everything, after all the previous sections were loaded. */
-    KERNEL_END_ADDR = . + 4K;
+    KERNEL_END_ADDR = KERNEL_STACK_TOP + 4K;
 }

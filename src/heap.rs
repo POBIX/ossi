@@ -6,7 +6,7 @@
 //!    allocation only. There is no metadata.
 //! 2. It contains many allocations, all of the same size. For example it might contain 128 32-byte
 //!    blocks. Whenever a 32-byte allocation is made, we find a free slot within a 32-byte
-//!    designated page (Slab), and mark it as used. 
+//!    designated page (Slab), and mark it as used.
 //! In order to find free slots efficiently, the blocks are structured as a linked list of free
 //! slots: a used slot contains arbitrary data; a free slot is a SlabNode.
 //! The metadata of the slabs is stored in a linked list as well.
@@ -16,13 +16,16 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use alloc::alloc::{GlobalAlloc, Layout};
 use spin::Mutex;
 
-use crate::{paging::{PageDirectory, PAGE_SIZE, PageFlags, PAGE_ENTRIES}, interrupts::KernelInterruptGuard};
+use crate::{
+    interrupts::KernelInterruptGuard,
+    paging::{PageDirectory, PageFlags, PAGE_ENTRIES, PAGE_SIZE},
+};
 
 pub(crate) struct Heap {
     space_start: usize,
     space_end: usize,
     first_slab: *mut SlabMetadata,
-    last_slab: *mut SlabMetadata
+    last_slab: *mut SlabMetadata,
 }
 
 pub(crate) struct SlabNode {
@@ -38,21 +41,25 @@ pub(crate) struct SlabMetadata {
 
 // The choice of numbers is pretty much completely arbitrary. I stole these numbers from Linux.
 const SLAB_SIZES: &[u16] = &[8, 16, 32, 64, 96, 128, 192, 256, 512, 1024, 2048];
-fn get_slab_size(req: usize) -> Option<u16> { SLAB_SIZES.iter().find(|&&n| usize::from(n) >= req).copied() }
+fn get_slab_size(req: usize) -> Option<u16> {
+    SLAB_SIZES.iter().find(|&&n| usize::from(n) >= req).copied()
+}
 
 impl Heap {
     fn create_metadata(&mut self, block_size: u16, node: *mut SlabNode) -> *mut SlabMetadata {
         const S: usize = core::mem::size_of::<SlabMetadata>();
         // The metadatas are packed sequentially into entire pages.
         // So, if we haven't exhausted the current page we can just go to the next address
-        let new: *mut SlabMetadata = if !self.first_slab.is_null() && self.last_slab as usize % PAGE_SIZE < PAGE_SIZE - S {
-            self.last_slab.wrapping_add(1)
-        } else {
-            // If we have then we make a new page and put this metadata at its top
-            let dir: &mut PageDirectory = unsafe { PageDirectory::curr().as_mut().unwrap() };
-            dir.map_new_pages(1, self.space_start, self.space_end, PageFlags::USER | PageFlags::RW)
-                as *mut SlabMetadata
-        };
+        let new: *mut SlabMetadata =
+            if !self.first_slab.is_null() && self.last_slab as usize % PAGE_SIZE < PAGE_SIZE - S {
+                self.last_slab.wrapping_add(1)
+            } else {
+                // If we have then we make a new page and put this metadata at its top
+                let dir: &mut PageDirectory = unsafe { PageDirectory::curr().as_mut().unwrap() };
+                dir.map_new_pages(
+                    1, self.space_start, self.space_end, PageFlags::USER | PageFlags::RW,
+                ) as *mut SlabMetadata
+            };
 
         unsafe {
             (*new).block_size = block_size;
@@ -63,19 +70,23 @@ impl Heap {
 
         if self.first_slab.is_null() {
             self.first_slab = new;
-            self.last_slab = new; 
+            self.last_slab = new;
         } else {
-            unsafe { (*self.last_slab).next = new; }
+            unsafe {
+                (*self.last_slab).next = new;
+            }
             self.last_slab = new;
         }
-        
+
         self.last_slab
     }
 
     fn create_slab(&mut self, block_size: u16) -> *mut SlabMetadata {
         // Make new page that our slab will live in
         let dir: &mut PageDirectory = unsafe { PageDirectory::curr().as_mut().unwrap() };
-        let mut node = dir.map_new_pages(1, self.space_start, self.space_end, PageFlags::USER | PageFlags::RW) as *mut SlabNode;
+        let mut node = dir.map_new_pages(
+            1, self.space_start, self.space_end, PageFlags::USER | PageFlags::RW
+        ) as *mut SlabNode;
         let metadata: *mut SlabMetadata = self.create_metadata(block_size, node);
 
         // Make free slots (all of them since we just created the slab) point at the next free slot
@@ -85,7 +96,9 @@ impl Heap {
                 node = (*node).next;
             }
         }
-        unsafe { (*node).next = core::ptr::null_mut(); } // No next free for the last one!
+        unsafe {
+            (*node).next = core::ptr::null_mut();
+        } // No next free for the last one!
 
         metadata
     }
@@ -115,8 +128,8 @@ impl Heap {
                 // Just give them a few pages
                 let dir: &mut PageDirectory = PageDirectory::curr().as_mut().unwrap();
                 dir.map_new_pages(
-                    layout.size().div_ceil(PAGE_SIZE), self.space_start, self.space_end, 
-                    PageFlags::USER | PageFlags::RW
+                    layout.size().div_ceil(PAGE_SIZE), self.space_start, self.space_end,
+                    PageFlags::USER | PageFlags::RW,
                 ) as *mut u8
             }
         }
@@ -128,7 +141,7 @@ impl Heap {
         if layout.size() > *SLAB_SIZES.last().unwrap() as usize {
             // This wasn't a slab allocation (too big), we just need to unmap its pages
             let dir: &mut PageDirectory = PageDirectory::curr().as_mut().unwrap();
-            for i in 0..(layout.size().div_ceil(PAGE_SIZE)) {
+            for i in 0..layout.size().div_ceil(PAGE_SIZE) {
                 dir.unmap(ptr as usize / PAGE_SIZE + i, true);
             }
         } else {
@@ -168,8 +181,8 @@ pub(crate) struct GlobalHeap(pub Mutex<Heap>);
 unsafe impl Sync for GlobalHeap {} // Interrupts must always be disabled before modifying the heap
 
 #[global_allocator]
-pub(crate) static HEAP: GlobalHeap = GlobalHeap(Mutex::new(Heap { 
-    space_start: 0, space_end: 0, 
+pub(crate) static HEAP: GlobalHeap = GlobalHeap(Mutex::new(Heap {
+    space_start: 0, space_end: 0,
     first_slab: core::ptr::null_mut(), last_slab: core::ptr::null_mut() 
 }));
 

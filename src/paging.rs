@@ -2,6 +2,7 @@ use alloc::{boxed::Box};
 use bitfield::bitfield;
 use bitflags::bitflags;
 use core::{mem::{size_of, transmute}, arch::asm};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 pub const PAGE_SIZE: usize = 0x1000;
 pub const PAGE_ENTRIES: usize = 1024;
@@ -45,13 +46,13 @@ impl Page {
 
 extern "C" {
     static KERNEL_LOAD_ADDR: usize;
-    static KERNEL_END_ADDR: usize; // we can safely allocate memory immediately after the end of the kernel
+    static KERNEL_END_ADDR: usize; // we can safely allocate memory after the end of the kernel
 }
 
 const HEAP_START: usize = 0x100_000;
-static mut PLACEMENT_ADDR: usize = HEAP_START;
+static PLACEMENT_ADDR: AtomicUsize = AtomicUsize::new(HEAP_START);
 /// The end of the paging heap. Calculated after init()
-pub(crate) static mut HEAP_END: usize = usize::MAX;
+pub(crate) static HEAP_END: AtomicUsize = AtomicUsize::new(usize::MAX);
 
 // The kernel needs to be able to modify other processes' page tables
 // which is why we reserve the top part of virtual memory for page table allocation
@@ -60,23 +61,24 @@ const TABLES_SIZE: usize = 128; // 128 page tables = 512MB of memory
 
 // this exists because the actual allocation functions in heap.rs rely on paging.
 unsafe fn kmalloc(size: usize, align: bool) -> *mut u8 {
-    if PLACEMENT_ADDR > HEAP_END {
+    if PLACEMENT_ADDR.load(Ordering::Relaxed) > HEAP_END.load(Ordering::Relaxed) {
         panic!("Out of paging-reserved memory!");
     }
 
-    if align && PLACEMENT_ADDR & (PAGE_SIZE - 1) != 0 {
+    if align && PLACEMENT_ADDR.load(Ordering::Relaxed) & (PAGE_SIZE - 1) != 0 {
         // If not already aligned,
         // align it to the nearest page boundary 
-        PLACEMENT_ADDR = (PLACEMENT_ADDR & !(PAGE_SIZE - 1)) + PAGE_SIZE;
+        PLACEMENT_ADDR.store((PLACEMENT_ADDR.load(Ordering::Relaxed) & !(PAGE_SIZE - 1)) + PAGE_SIZE, Ordering::Relaxed);
     }
-    // this assumes nothing is ever freed, which is okay because this function is only called for 'static variables.
-    let curr = PLACEMENT_ADDR;
-    PLACEMENT_ADDR += size;
+    // we assume nothing is ever freed, because this function is only called for 'static variables.
+    let curr = PLACEMENT_ADDR.load(Ordering::Relaxed);
+    PLACEMENT_ADDR.store(curr + size, Ordering::Relaxed);
     curr as *mut u8
 }
 
-static mut CURR_DIR: *mut PageDirectory = core::ptr::null_mut();
-static mut KERNEL_DIR: *mut PageDirectory = core::ptr::null_mut();
+
+static CURR_DIR: AtomicPtr<PageDirectory> = AtomicPtr::new(core::ptr::null_mut());
+static KERNEL_DIR: AtomicPtr<PageDirectory> = AtomicPtr::new(core::ptr::null_mut());
 #[repr(align(0x1000))] // 0x1000=PAGE_SIZE. Rust does not support constants in attributes.
 pub struct PageTable {
     pages: [Page; PAGE_ENTRIES],
@@ -84,11 +86,11 @@ pub struct PageTable {
 
 #[repr(C, align(0x1000))] // 0x1000=PAGE_SIZE. Rust does not support constants in attributes.
 pub struct PageDirectory {
-    pub page_tables: [u32; PAGE_ENTRIES]
+    pub page_tables: [u32; PAGE_ENTRIES],
 }
 
 impl PageDirectory {
-    /// Returns a new page directory, with the kernel mapped. Must be manually freed, via Box::from_raw
+    /// Returns a new valid page directory. Must be manually freed, via Box::from_raw
     pub fn new() -> *mut Self {
         unsafe {
             let dir: *mut Self = Box::into_raw(Box::new_zeroed().assume_init());
@@ -102,19 +104,22 @@ impl PageDirectory {
     /// Identity maps the kernel addresses
     pub fn map_kernel(&mut self, flags: PageFlags) {
         unsafe {
-            // We need to identity map the first megabyte (the physical address should equal the virtual address)
-            // This is because it is nearly all BIOS and stuff code that relies on being in certain addresses.
-            // We also map everything that we `kmalloc`ed, since it comes directly afterwards anyways. (0x100_000..PLACEMENT_ADDR).
-            // We do NOT map the first page (0-PAGE_SIZE) since it includes null etc. and is not used
-            self.identity_map(PAGE_SIZE, HEAP_END - PAGE_SIZE, flags);
+            // We need to identity map the first megabyte (the physical address should equal the
+            // virtual address)
+            // This is because most of it is system code which relies on being in certain addresses.
+            // We also map everything that we `kmalloc`ed,
+            // since it comes directly afterwards anyways. (0x100_000..PLACEMENT_ADDR).
+            // We do NOT map the first page (0-PAGE_SIZE) since it includes null etc. and is unused
+            self.identity_map(PAGE_SIZE, HEAP_END.load(Ordering::Relaxed) - PAGE_SIZE, flags);
 
             // Map the kernel addresses. They also need to be identity mapped since 
             // after paging is enabled, the IP stays the same, so it should point at the same code.
-            let unaligned_size: usize = (&KERNEL_END_ADDR as *const _ as usize) - (&KERNEL_LOAD_ADDR as *const _ as usize);
+            let unaligned_size: usize = // the linker puts extern's values in their memory addresses
+                (&KERNEL_END_ADDR as *const _ as usize) - (&KERNEL_LOAD_ADDR as *const _ as usize);
             self.identity_map(
-                &KERNEL_LOAD_ADDR as *const _ as usize, // the linker puts extern's values in their memory addresses.
+                &KERNEL_LOAD_ADDR as *const _ as usize,
                 (unaligned_size + 0xFFF) & !0xFFF, // align the size (round up)
-                flags
+                flags,
             );
         }
     }
@@ -125,15 +130,17 @@ impl PageDirectory {
             self.identity_map(
                 self as *const _ as usize,
                 size_of::<PageDirectory>(),
-                flags
+                flags,
             );
         }
     }
 
-    /// Maps the page directory's last table entry to the directory itself, so that it can be modified from within itself
-    /// Weird trick that abuses the fact that page directories and page tables have the same bit structure
+    /// Maps the page directory's last table entry to the directory itself,
+    /// so that it can be modified from within itself.
+    /// Weird trick that abuses the fact that directories and tables have the same bit structure
     fn map_recursive(&mut self, flags: PageFlags) {
-        self.page_tables[self.page_tables.len() - 1] = self.get_phys_addr() as u32 | (PageFlags::PRESENT | flags).bits();
+        self.page_tables[self.page_tables.len() - 1] =
+            self.get_phys_addr() as u32 | (PageFlags::PRESENT | flags).bits();
         // We can now access the directory from within itself by referencing its last entry
         // i.e. the virtual address of each table is 0xFFC00000 + table_idx * PAGE_SIZE
         // and the virtual address of the page directory itself is 0xFFFFF000
@@ -148,17 +155,21 @@ impl PageDirectory {
         }
     }
 
-    /// Maps every virtual address from addr to addr+size to every physical address from addr to addr+size
+    /// Gives this page directory its own heap at a hardcoded address (for retrival during alloc())
+    fn map_heap(&mut self) {}
+
+    /// Maps every virtual address in addr..addr+size to every physical address in addr..addr+size
     /// (Note: you probably want addr and size to be aligned)
     pub unsafe fn identity_map(&mut self, addr: usize, size: usize, flags: PageFlags) {
         for i in (0..size).step_by(PAGE_SIZE) {
-            self.make_page(addr + i, addr + i, flags).unwrap_or_else(|_| panic!("{}", addr+i));
+            self.make_page(addr + i, addr + i, flags).unwrap_or_else(|_| panic!("{}", addr + i));
         }
     }
 
     /// Returns the virtual address of the directory
     fn get_dir_ptr(&mut self) -> *mut PageDirectory {
-        if core::ptr::eq(self, Self::curr()) { // If this is the active page directory, recursive mapping must be set up
+        if core::ptr::eq(self, Self::curr()) {
+            // If this is the active page directory, recursive mapping must be set up
             0xFFFFF000 as *mut PageDirectory
         } else {
             self // Otherwise, we assume the directory has been allocated in identity mapped memory
@@ -168,7 +179,8 @@ impl PageDirectory {
     /// Returns the virtual address of a table, assuming a recursive map is set up 
     /// or if self != the currently active page directory, that self is identity mapped
     fn get_table_ptr(&self, table_idx: usize) -> *mut PageTable {
-        if core::ptr::eq(self, Self::curr()) { // If this is the active page directory, recursive mapping must be set up
+        if core::ptr::eq(self, Self::curr()) {
+             // If this is the active page directory, recursive mapping must be set up
             (0xFFC00000 + table_idx * PAGE_SIZE) as *mut PageTable
         } else {
             // Otherwise, we assume the table has been allocated in identity mapped memory
@@ -176,17 +188,19 @@ impl PageDirectory {
         }
     }
 
-    /// Returns (the index of the page in the page table, the index of the table in the directory, the table), for the given address
+    /// Returns (the index of the page in the page table, the index of the table in the directory,
+    /// the table), for the given address
     fn find_table(&mut self, address: usize) -> (usize, usize, *mut PageTable) {
         let index = address / PAGE_SIZE;
         let table_idx = index / PAGE_ENTRIES;
 
         let dir: *mut PageDirectory = self.get_dir_ptr();
-        let virt: *mut PageTable = if unsafe {(*dir).page_tables}[table_idx] & PageFlags::PRESENT.bits() != 0 {
-            self.get_table_ptr(table_idx)
-        } else {
-            core::ptr::null_mut()
-        };
+        let virt: *mut PageTable =
+            if unsafe {(*dir).page_tables[table_idx]} & PageFlags::PRESENT.bits() != 0 {
+                self.get_table_ptr(table_idx)
+            } else {
+                core::ptr::null_mut()
+            };
 
         (index % PAGE_ENTRIES, table_idx, virt)
     }
@@ -201,12 +215,12 @@ impl PageDirectory {
         }
     }
 
-    /// Must be called on any change to the paging directory, or else the CPU will use the old cached value
+    /// Must be called on any change to the paging directory, or the CPU will use the old value
     unsafe fn invalidate_tlb(virt_addr: usize) {
         asm!(
-            "invlpg [{v}]",
-            v = in(reg) virt_addr, 
-            options(nostack, preserves_flags)
+        "invlpg [{v}]",
+        v = in(reg) virt_addr,
+        options(nostack, preserves_flags)
         );
     }
 
@@ -214,7 +228,8 @@ impl PageDirectory {
     /// Must be called on kernel. unmap_kernel_table must be called after end of usage.
     fn map_kernel_table(&mut self, addr: u32, flags: PageFlags) -> *mut PageTable {
         // So we map it to one of the reserved pages in between TABLES_START and the end of memory
-        let page: usize = self.get_free_pages(1, PAGE_ENTRIES - 1 - TABLES_SIZE, PAGE_ENTRIES - 1).unwrap();
+        let page: usize =
+            self.get_free_pages(1, PAGE_ENTRIES - 1 -TABLES_SIZE, PAGE_ENTRIES - 1).unwrap();
         let (i, _, temp_table) = self.find_table(page);
         unsafe {
             (*temp_table).pages[i] = Page(addr | PageFlags::PRESENT.bits() | flags.bits());
@@ -234,7 +249,8 @@ impl PageDirectory {
     }
 
     /// Allocates a new page table at the specified index and returns its virtual address
-    unsafe fn make_table(&mut self, usage: &mut FramesUsage, index: usize, flags: PageFlags, auto_unmap: bool) -> *mut PageTable {
+    unsafe fn make_table(&mut self, usage: &mut FramesUsage, index: usize, flags: PageFlags,
+                         auto_unmap: bool) -> *mut PageTable {
         // This function is called from within alloc::alloc. So we can't use that obviously
         let new_phys: u32 = if crate::heap::has_init() {
             // Thankfully a PageTable is precisely 4KB, so it fits perfectly inside of a frame. 
@@ -242,16 +258,19 @@ impl PageDirectory {
             usage.set_frame_used(free_frame, true);
             (free_frame * PAGE_SIZE) as u32
         } else {
-            // BUT if we're calling this during the directory initialisation, get_free_frame will return an unmapped address
-            // We've reserved just enough memory for kmalloc to use such that we should never run out if we only ever call it
-            // during initialisation indeed (kmalloc allocates in identity mapped memory)
+            // BUT if we're calling this during the directory initialisation,
+            // get_free_frame will return an unmapped address. We've reserved just enough memory for
+            // kmalloc to use such that we should never run out if we only ever call it during
+            // initialisation indeed (kmalloc allocates in identity mapped memory)
             kmalloc(PAGE_SIZE, true) as u32
         };
 
-        (*self.get_dir_ptr()).page_tables[index] = new_phys | PageFlags::PRESENT.bits() | flags.bits();
+        (*self.get_dir_ptr()).page_tables[index] =
+            new_phys | PageFlags::PRESENT.bits() | flags.bits();
 
         let virt: *mut PageTable = if self.in_kernel() {
-            // If the kernel directory is modifying self, then new_phys will be unmapped and we will have no way of accessing it.
+            // If the kernel directory is modifying self, then new_phys will be unmapped
+            // and we will have no way of accessing it.
             (*Self::curr()).map_kernel_table(new_phys, flags)
         } else {
             self.get_table_ptr(index)
@@ -266,18 +285,25 @@ impl PageDirectory {
         virt
     }
 
-    /// Creates a new page at virt_addr and maps it to phys_addr, or errors if that virtual address is already mapped
-    /// (Does not check whether phys_addr is already used)
-    pub unsafe fn make_page(&mut self, virt_addr: usize, phys_addr: usize, flags: PageFlags) -> Result<&mut Page, ()> {
+    /// Creates a new page at virt_addr and maps it to phys_addr, or errors if that virtual address
+    /// is already mapped (Does not check whether phys_addr is already used)
+    pub unsafe fn make_page(&mut self, virt_addr: usize, phys_addr: usize, flags: PageFlags)
+        -> Result<&mut Page, ()>
+    {
         let mut usage = FRAMES_USAGE.lock();
 
         let (index, table_idx, curr_table) = self.find_table(virt_addr);
-        let (table, unmap_needed): (*mut PageTable, bool) = // Allocate the table if it doesn't already exist
-            if curr_table.is_null() {(self.make_table(&mut usage, table_idx, flags, false), self.in_kernel())} 
-            else if self.in_kernel() { ((*Self::curr()).map_kernel_table(curr_table as *const _ as u32, PageFlags::RW), true) }
-            else { (curr_table, false) };
+        // Allocate the table if it doesn't already exist
+        let (table, unmap_needed): (*mut PageTable, bool) =
+            if curr_table.is_null() {
+                (self.make_table(&mut usage, table_idx, flags, false), self.in_kernel())
+            } else if self.in_kernel() {
+                ((*Self::curr()).map_kernel_table(curr_table as u32, PageFlags::RW), true)
+            } else {
+                (curr_table, false)
+            };
 
-        // Assign the page (it already exists as it's been either zero initialised or used then freed)
+        // Assign the page (it already exists, it's been either zero initialised or used then freed)
         let page: &mut Page = &mut (*table).pages[index];
         if page.present() { return Err(()); }
 
@@ -286,7 +312,7 @@ impl PageDirectory {
         page.set_rw(flags.contains(PageFlags::RW));
         usage.set_page_frame(page, phys_addr / PAGE_SIZE);
 
-        Self::invalidate_tlb(virt_addr); 
+        Self::invalidate_tlb(virt_addr);
 
         if self.in_kernel() {
             // We're done modifying, unmap it now
@@ -323,7 +349,7 @@ impl PageDirectory {
                         sum += 1;
                         if sum >= pages { return start; }
                     } else {
-                        start = None; 
+                        start = None;
                         sum = 0;
                     }
                 }
@@ -333,44 +359,41 @@ impl PageDirectory {
     }
 
     fn get_phys_addr(&self) -> usize {
-        unsafe {
-            if CURR_DIR.is_null() {
-                self as *const _ as usize
-            } else {
-                (*CURR_DIR).get_page(self as *const _ as usize)
-                .expect("Attempted to switch to unmapped page directory!").frame() as usize * PAGE_SIZE
-            }
-        }
+        if CURR_DIR.load(Ordering::Relaxed).is_null() {
+            self as *const _ as usize
+        } else { unsafe {
+            (*CURR_DIR.load(Ordering::Relaxed)).get_page(self as *const _ as usize)
+            .expect("Attempted to switch to unmapped page directory!").frame() as usize * PAGE_SIZE
+        }}
     }
 
     pub unsafe fn switch_to(&mut self) {
         asm!(
-            "mov cr3, {r:e}",
-            r = in(reg) self.get_phys_addr()
+        "mov cr3, {r:e}",
+        r = in(reg) self.get_phys_addr()
         );
-        CURR_DIR = self;
+        CURR_DIR.store(self, Ordering::Relaxed);
     }
 
-    pub unsafe fn switch_to_kernel() {
-       (*KERNEL_DIR).switch_to();
-    }
+    pub unsafe fn switch_to_kernel() { (*KERNEL_DIR.load(Ordering::Relaxed)).switch_to(); }
 
-    // Not marking this function unsafe since there will always be an active page directory (excluding the init() function).
-    // If you freed a page directory while it was in use your code is going to crash immediately anyways.
-    pub fn curr() -> *mut PageDirectory {
-        unsafe { CURR_DIR }
-    }
+    // Not marking this function unsafe since there will always be an active page directory
+    // (excluding the init() function). If you freed a page directory while it was in use your code
+    // is going to crash immediately anyways.
+    pub fn curr() -> *mut PageDirectory { CURR_DIR.load(Ordering::Relaxed) }
 
     fn in_kernel(&self) -> bool {
-        // If any page directory other than self is active, we take that to mean the kernel directory is the active one
-        // This is because userspace directories shouldn't have the power to modify any directory other than their own
+        // If any page directory other than self is active, we take that to mean the kernel
+        // directory is the active one. This is because userspace directories shouldn't have the
+        // power to modify any directory other than their own
         !Self::curr().is_null() && !core::ptr::eq(self, Self::curr())
     }
 
     /// Maps the first virtual address that has `pages` free consecutive pages after it to some
     /// physical addresses, searching between from and to (page table space, 0..1024),
     /// or panics if out of memory
-    pub fn map_new_pages(&mut self, pages: usize, from: usize, to: usize, flags: PageFlags) -> usize {
+    pub fn map_new_pages(&mut self, pages: usize, from: usize, to: usize, flags: PageFlags) -> usize
+    {
         let start: usize = self.get_free_pages(pages, from, to).expect("Out of virtual memory!");
         for i in 0..pages {
             let frame: usize = FRAMES_USAGE.lock().get_free_frame().expect("Out of memory!") * PAGE_SIZE;
@@ -378,7 +401,7 @@ impl PageDirectory {
                 self.make_page(
                     start + i * PAGE_SIZE,
                     frame,
-                    flags
+                    flags,
                 ).unwrap();
             }
         }
@@ -399,14 +422,14 @@ impl PageDirectory {
 impl Drop for PageDirectory {
     fn drop(&mut self) {
         let mut usage = FRAMES_USAGE.lock();
- 
+
         // Don't free the last table, as it points at the directory (see map_recursive)
         for table in self.page_tables.iter().take(self.page_tables.len() - 1) {
             let t = (table & 0xFFFFF000) as usize; // physical address of the table
 
             // Free any table that was allocated on the actual heap (as opposed to the kernel heap)
             // (The kernel heap is a bump allocator and therefore freeing is useless)
-            if t != 0 && t > unsafe { HEAP_END } {
+            if t != 0 && t > HEAP_END.load(Ordering::Relaxed) {
                 unsafe {
                     usage.set_frame_used(t / PAGE_SIZE, false);
                 }
@@ -440,8 +463,9 @@ impl FramesUsage {
 
     /// Returns the index of the first unused frame, or None if none is available
     pub fn get_free_frame(&self) -> Option<usize> {
-        // note: this is performance critical code. .into_iter().enumerate() is about 3 times slower.
-        for i in unsafe { (HEAP_END / PAGE_SIZE).div_ceil(32) }..self.0.len() { // We only start checking at HEAP_END since everything before is guaranteed to be in use
+        // note: this is performance critical code. .into_iter().enumerate() is about 3 times slower
+        // We only start checking at HEAP_END since everything before is guaranteed to be in use
+        for i in (HEAP_END.load(Ordering::Relaxed) / PAGE_SIZE).div_ceil(32)..self.0.len() {
             let frame = self.0[i];
             // if every bit in frame is set, we don't need to check each bit individually
             if frame == 0xFFFFFFFF {
@@ -489,11 +513,13 @@ pub fn init() -> usize {
         transmute(ptr)
     };
 
-    unsafe {
-        // The only instances of using kmalloc after this are when allocating a single PageTable.
-        // Theoretically there can only be PAGE_ENTRIES of them, so
-        HEAP_END = PLACEMENT_ADDR + size_of::<PageTable>() * PAGE_ENTRIES;
-    }
+    // The only instances of using kmalloc after this are when allocating a single PageTable.
+    // Theoretically there can only be PAGE_ENTRIES of them, so
+    HEAP_END.store(
+        PLACEMENT_ADDR.load(Ordering::Relaxed) + size_of::<PageTable>() * PAGE_ENTRIES,
+        Ordering::Relaxed
+    );
+
 
     kernel_dir.map_kernel(PageFlags::RW);
     kernel_dir.map_recursive(PageFlags::RW);
@@ -502,26 +528,23 @@ pub fn init() -> usize {
         // Activate the directory and actually enable paging CPU side
         kernel_dir.switch_to();
         asm!(
-            "mov {r:e}, cr0",
-            "or {r:e}, 0x80000000",
-            "mov cr0, {r:e}",
-            r = out(reg) _,
-            options(nostack)
+        "mov {r:e}, cr0",
+        "or {r:e}, 0x80000000",
+        "mov cr0, {r:e}",
+        r = out(reg) _,
+        options(nostack)
         );
     }
 
     kernel_dir.map_tables(PageFlags::RW);
 
-    unsafe {
-        KERNEL_DIR = kernel_dir;
-    }
+    KERNEL_DIR.store(kernel_dir, Ordering::Relaxed);
 
-    // We've used the beginning of the "proper" heap with kmalloc, and we don't want to override anything.
+    // We've used the beginning of the "proper" heap with kmalloc, we don't want to override it.
     // Returning the first free address is the simplest solution.
-    // We return the first free block (multiple of PAGE_SIZE) and not the first address to avoid double mapping
-    unsafe {
-        let x = HEAP_END + 1; // + 1 so that if it's already aligned to 4K we return the next block anyways
-        HEAP_END = x + PAGE_SIZE - (x % PAGE_SIZE); // actually align it
-        HEAP_END
-    }
+    // We return the first free block (multiple of PAGE_SIZE) and not the first address
+    // to avoid double mapping.
+    let x = HEAP_END.load(Ordering::Relaxed) + 1; // + 1 in case it's already aligned
+    HEAP_END.store(x + PAGE_SIZE - (x % PAGE_SIZE), Ordering::Relaxed); // actually align it
+    HEAP_END.load(Ordering::Relaxed)
 }

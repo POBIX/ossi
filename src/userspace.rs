@@ -39,7 +39,7 @@ unsafe fn tss_flush() {
 /// The Task State Segment allows us to go back into Ring 0 (kernel space) from Ring 3 (user space)
 #[repr(C, packed)]
 struct TssEntry {
-    pub prev_tss: u32, // The previous TSS - if we used hardware task switching this would form a linked list.
+    pub prev_tss: u32, // The previous TSS - if we used hardware TS this would form a linked list.
     pub esp0: u32, // The stack pointer to load when we change to kernel mode.
     pub ss0: u32, // The stack segment to load when we change to kernel mode.
     pub esp1: u32, // Unused...
@@ -68,9 +68,38 @@ struct TssEntry {
     pub iomap_base: u16,
 }
 
-static mut TSS_ENTRY: TssEntry = TssEntry {prev_tss: 0, esp0: 0, ss0: 0, esp1: 0, ss1: 0, esp2: 0, ss2: 0, cr3: 0, eip: 0, eflags: 0, eax: 0, ecx: 0, edx: 0, ebx: 0, esp: 0, ebp: 0, esi: 0, edi: 0, es: 0, cs: 0, ss: 0, ds: 0, fs: 0, gs: 0, ldt: 0, trap: 0, iomap_base: 0 };
+static mut TSS_ENTRY: TssEntry = TssEntry {
+    prev_tss: 0,
+    esp0: 0,
+    ss0: 0,
+    esp1: 0,
+    ss1: 0,
+    esp2: 0,
+    ss2: 0,
+    cr3: 0,
+    eip: 0,
+    eflags: 0,
+    eax: 0,
+    ecx: 0,
+    edx: 0,
+    ebx: 0,
+    esp: 0,
+    ebp: 0,
+    esi: 0,
+    edi: 0,
+    es: 0,
+    cs: 0,
+    ss: 0,
+    ds: 0,
+    fs: 0,
+    gs: 0,
+    ldt: 0,
+    trap: 0,
+    iomap_base: 0
+};
 
-unsafe fn gdt_set_gate(gdt_entries: *mut GdtEntry, num: usize, base: u32, limit: u32, access: u8, gran: u8) {
+unsafe fn gdt_set_gate(gdt_entries: *mut GdtEntry, num: usize, base: u32, limit: u32, access: u8,
+                       gran: u8) {
     (*gdt_entries.add(num)).base_low = (base & 0xFFFF) as u16;
     (*gdt_entries.add(num)).base_middle = ((base >> 16) & 0xFF) as u8;
     (*gdt_entries.add(num)).base_high = ((base >> 24) & 0xFF) as u8;

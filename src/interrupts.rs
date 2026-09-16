@@ -47,7 +47,7 @@ impl Handler {
             ptr_low: (addr & 0xFFFF) as u16,
             ptr_high: (addr >> 16) as u16,
             selector: cs(),
-            attributes: 0x80 | (dpl << 5) + gate_type as u8, // adding 0x80 sets the present bit to 1.
+            attributes: 0x80 | (dpl << 5) + gate_type as u8, // adding 0x80 sets PRESENT to 1.
             _reserved: 0,
         }
     }

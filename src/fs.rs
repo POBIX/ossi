@@ -3,8 +3,7 @@ use core::mem::size_of;
 
 use alloc::{alloc::alloc, vec::Vec, string::{String, ToString}};
 use spin::{Lazy, Mutex};
-
-use crate::io;
+use crate::{syscall, io};
 
 /// The number of sectors the Header struct should take up.
 pub const HEADER_SECTORS: usize = 2;
@@ -64,7 +63,7 @@ impl File {
     fn from_index(index: usize) -> File { File { index, ptr: 0 } }
 
     pub fn open(path: &str) -> Result<File, FileError> {
-        let mut header = crate::syscall::get_fs_header().lock();
+        let mut header = syscall::get_fs_header().lock();
 
         // search for a file with the same path as the parameter
         for i in 0..header.entries.len() {
@@ -89,7 +88,7 @@ impl File {
     }
 
     pub fn create(path: &str) -> Result<File, FileError> {
-        let mut header = crate::syscall::get_fs_header().lock();
+        let mut header = syscall::get_fs_header().lock();
 
         if path.len() >= MAX_PATH_LENGTH {
             return Err(FileError::PathTooLong);
@@ -147,7 +146,7 @@ impl File {
     }
 
     pub fn delete(&mut self) -> Result<(), FileError>{
-        let mut header = crate::syscall::get_fs_header().lock();
+        let mut header = syscall::get_fs_header().lock();
         let metadata = &mut header.entries[self.index];
 
         if !metadata.flags.contains(FileFlags::OPENED) {
@@ -160,18 +159,18 @@ impl File {
 
     #[inline]
     pub fn get_metadata(&self) -> FileMetadata {
-        crate::syscall::get_fs_header().lock().entries[self.index]
+        syscall::get_fs_header().lock().entries[self.index]
     }
 
     pub fn set_size(&mut self, val: usize) {
-        let mut header = crate::syscall::get_fs_header().lock();
+        let mut header = syscall::get_fs_header().lock();
         header.entries[self.index].size = val;
         update_header(&header);
     }
 
     pub fn close(&mut self) {
         // close the file
-        let mut header = crate::syscall::get_fs_header().lock();
+        let mut header = syscall::get_fs_header().lock();
         if self.index >= header.entries.len() {
             // File already closed
             return;
@@ -203,7 +202,7 @@ impl io::Read for File {
         let sector_offset = self.ptr / 512; // the sector our byte is in
         let mut buffer = [0u8; 512]; // we have to read the whole sector, even for just one byte
         let md = self.get_metadata();
-        crate::syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
+        syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
 
         buffer[self.ptr % 512]
     }
@@ -219,7 +218,7 @@ impl io::Read for File {
         if self.ptr % 512 != 0 || count % 512 != 0 {
             sector_count += 1;
         }
-        crate::syscall::ReadSectors::call((md.sector + sector_a) as u32, buffer.as_mut_ptr(), sector_count);
+        syscall::ReadSectors::call((md.sector+sector_a) as u32, buffer.as_mut_ptr(), sector_count);
         count
     }
 }
@@ -227,16 +226,16 @@ impl io::Read for File {
 impl io::Write for File {
     fn write_byte(&mut self, byte: u8) {
         let sector_offset = self.ptr / 512; // the sector our byte is in
-        let mut buffer = [0u8; 512]; // we have to write over the whole sector, even for just one byte
+        let mut buffer = [0u8; 512]; // we have to write over the whole sector, even for just 1 byte
         // in order to not overwrite anything else, read this sector first
         let md = self.get_metadata();
-        crate::syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
+        syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
 
         // set the byte
         buffer[self.ptr % 512] = byte;
 
         // update the sector on disk
-        crate::syscall::WriteSectors::call((md.sector + sector_offset) as u32, buffer.as_ptr(), 1);
+        syscall::WriteSectors::call((md.sector + sector_offset) as u32, buffer.as_ptr(), 1);
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) {
@@ -245,7 +244,7 @@ impl io::Write for File {
         let sector_b = (self.ptr + bytes.len()) / 512; // the last byte's sector
         let sector_count = sector_b - sector_a + 1;
 
-        // In case ptr currently points at the middle of a sector, we want to not override everything before it,
+        // If ptr currently points inside a sector, we want to not override everything before it,
         // so we read the final sector
         if self.ptr % 512 != 0 {
             //TODO
@@ -253,7 +252,7 @@ impl io::Write for File {
         let md = self.get_metadata();
 
         // update the sectors on disk
-        crate::syscall::WriteSectors::call((md.sector + sector_a) as u32, bytes.as_ptr(), sector_count);
+        syscall::WriteSectors::call((md.sector + sector_a) as u32, bytes.as_ptr(), sector_count);
     }
 }
 
@@ -261,7 +260,7 @@ fn read_header() -> Mutex<&'static mut Header> {
     unsafe {
         let ptr = alloc(Layout::from_size_align_unchecked(HEADER_SECTORS * 512, 4));
         let header: &mut Header;
-        crate::syscall::ReadSectors::call(0, ptr, HEADER_SECTORS);
+        syscall::ReadSectors::call(0, ptr, HEADER_SECTORS);
         header = core::mem::transmute(ptr);
         Mutex::new(header)
     }
@@ -271,13 +270,12 @@ fn read_header() -> Mutex<&'static mut Header> {
 #[inline]
 fn update_header(header: &Header) {
     unsafe {
-        // we transmute header to be a byte array, and we use *& in order to get the data behind the mutex.
-        crate::syscall::WriteSectors::call(0, core::mem::transmute(header), HEADER_SECTORS);
+        syscall::WriteSectors::call(0, core::mem::transmute(header), HEADER_SECTORS);
     }
 }
 
 pub(crate) fn dir(root: &String, folders: &mut Vec<String>, files: &mut Vec<FileMetadata>) {
-    let header = crate::syscall::get_fs_header().lock();
+    let header = syscall::get_fs_header().lock();
 
     for file in &header.entries {
         if !file.path.starts_with(root.as_bytes()) || file.flags.contains(FileFlags::DELETED) {

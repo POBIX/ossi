@@ -186,12 +186,14 @@ impl Console {
     }
 
     pub fn backspace(&mut self) {
-        if self.ptr == 0 { return; } // if we're at the first character, there's nothing more to erase.
+        // if we're at the first character, there's nothing more to erase.
+        if self.ptr == 0 { return; }
         let mut new_pos = self.ptr - 1;
         self.buffer.write(&mut new_pos, b' ', self.color);
         // if we backspaced a newline, go to the end of the text in the previous line
         if new_pos % VGA_BUFFER_WIDTH == 0 {
-            while self.ptr > new_pos - VGA_BUFFER_WIDTH && // don't overflow to the previous line if there's no text
+            // don't overflow to the previous line if there's no text
+            while self.ptr > new_pos - VGA_BUFFER_WIDTH &&
                 self.buffer.buffer[self.ptr - 1].read() == (Char { byte: b' ', color: self.color })
             {
                 self.ptr -= 1;

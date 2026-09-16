@@ -1,6 +1,5 @@
 use crate::interrupts::GateType;
 use crate::{interrupts, pic};
-use alloc::boxed::Box;
 use spin::Mutex;
 use crate::events::{Event, EventHandler};
 use core::arch::asm;
@@ -17,8 +16,8 @@ pub fn init() {
 #[naked]
 extern "x86-interrupt" fn on_tick() {
     // Force preservation of state.
-    // Even though the "x86-interrupt" ABI preserves all used registers, some registers are not actually used
-    // by the function. So they won't be preserved. Which is bad.
+    // Even though the "x86-interrupt" ABI preserves all used registers, some registers are not
+    // actually used by the function. So they won't be preserved. Which is bad.
     // This causes some registers to be pushed twice, but there doesn't seem to be a simple fix.
 
     unsafe {

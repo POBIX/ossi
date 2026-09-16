@@ -1,4 +1,5 @@
-// this file is pretty much a rust adaptation of some stuff from https://www.gnu.org/software/grub/manual/multiboot/html_node/multiboot_002eh.html
+// this file is pretty much a rust adaptation of some stuff from
+// https://www.gnu.org/software/grub/manual/multiboot/html_node/multiboot_002eh.html
 
 #[repr(C)]
 pub(crate) struct MultibootInfo {
