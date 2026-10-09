@@ -42,8 +42,8 @@ fn on_tick_internal() {
     unsafe { TIMER += 1; }
     ON_TICK.lock().invoke(());
 
-    // If we haven't yet initialised the heap, don't run the task scheduler code
-    if !crate::heap::has_init() || !crate::process::has_loaded_processes() {
+    // If we don't have any processes, don't run the task scheduler code
+    if !crate::process::has_loaded_processes() {
         pic::send_eoi(0);
         crate::interrupts::enable();
         return;

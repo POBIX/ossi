@@ -223,9 +223,7 @@ extern "x86-interrupt" fn syscall_handler_lifetime() {
 decl_syscalls!(
     Print<'a> = print_syscall{args: core::fmt::Arguments<'a>},
     AreInterruptsEnabled<'a> = are_interrupts_enabled{value: &'a mut bool},
-    Alloc<'a> = alloc{ptr: &'a mut *mut u8, layout: core::alloc::Layout},
     RunProgram<'a> = crate::execution::run_program{program: &'a [u8]},
-    HasInitHeap<'a> = has_init_heap{out: &'a mut bool},
     HasLoadedProcesses<'a> = has_loaded_processes{out: &'a mut bool},
     GetCurrPageDir<'a> = get_curr_page_dir{out: &'a mut *mut crate::paging::PageDirectory},
     GetOnKeyDown<'a> = get_on_key_down{out: &'a mut &'static Mutex<Event<crate::keyboard::KeyArgs>>},
@@ -250,21 +248,12 @@ decl_syscalls!(
     SetIsr = set_isr{index: usize, func: extern "x86-interrupt" fn(), dpl: u8},
     PicSendEoi = crate::pic::send_eoi{irq_line: u8},
     PicSetMask = crate::pic::set_mask{irq_line: u8, value: bool},
-    Dealloc = dealloc{ptr: *mut u8, layout: core::alloc::Layout},
     UnreigsterProcess = crate::process::unregister_prev{},
     IoWait = crate::io::wait{}
 );
 
 fn print_syscall(args: core::fmt::Arguments) {
     crate::vga_console::_print(args);
-}
-
-unsafe fn alloc(ptr: &mut *mut u8, layout: core::alloc::Layout) {
-    *ptr = crate::heap::HEAP.0.lock().alloc_internal(layout);
-}
-
-unsafe fn dealloc(ptr: *mut u8, layout: core::alloc::Layout) {
-    crate::heap::HEAP.0.lock().dealloc_internal(ptr, layout);
 }
 
 fn is_key_pressed(out: &mut bool, key: crate::keyboard::Key) {
@@ -287,7 +276,6 @@ macro_rules! generate_ret_func {
     };
 }
 
-generate_ret_func!(has_init_heap, crate::heap::has_init(), bool);
 generate_ret_func!(has_loaded_processes, crate::process::has_loaded_processes(), bool);
 generate_ret_func!(get_curr_page_dir, crate::paging::PageDirectory::curr(), *mut crate::paging::PageDirectory);
 generate_ret_func!(are_interrupts_enabled, crate::interrupts::is_enabled(), bool);

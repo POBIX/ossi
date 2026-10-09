@@ -1,4 +1,4 @@
-//! TODO: slabs need to be per-process :(. Also alignment
+//! TODO: Alignment
 //! Brief overview of how allocation works:
 //! The page directory keeps track of which pages are mapped and which are not.
 //! For a mapped page, there are two possibilites:
@@ -11,28 +11,30 @@
 //! slots: a used slot contains arbitrary data; a free slot is a SlabNode.
 //! The metadata of the slabs is stored in a linked list as well.
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
 use alloc::alloc::{GlobalAlloc, Layout};
-use spin::Mutex;
+use spin::{Mutex, Once};
 
 use crate::{
     interrupts::KernelInterruptGuard,
-    paging::{PageDirectory, PageFlags, PAGE_ENTRIES, PAGE_SIZE},
+    paging::{PAGE_SIZE, self, PageFlags},
 };
 
-pub(crate) struct Heap {
-    space_start: usize,
-    space_end: usize,
+pub trait Pager {
+    unsafe fn map(&mut self, n: usize) -> usize;
+    unsafe fn unmap(&mut self, page: usize);
+}
+
+pub struct Heap<P : Pager> {
+    pager: P,
     first_slab: *mut SlabMetadata,
     last_slab: *mut SlabMetadata,
 }
 
-pub(crate) struct SlabNode {
+pub struct SlabNode {
     next: *mut SlabNode,
 }
 
-pub(crate) struct SlabMetadata {
+pub struct SlabMetadata {
     block_size: u16,
     addr: *mut u8,
     free: *mut SlabNode,
@@ -45,7 +47,13 @@ fn get_slab_size(req: usize) -> Option<u16> {
     SLAB_SIZES.iter().find(|&&n| usize::from(n) >= req).copied()
 }
 
-impl Heap {
+impl<P: Pager> Heap<P> {
+    pub fn new(pager: P) -> Heap<P> { Heap {
+        pager,
+        first_slab: core::ptr::null_mut(),
+        last_slab: core::ptr::null_mut()
+    }}
+
     fn create_metadata(&mut self, block_size: u16, node: *mut SlabNode) -> *mut SlabMetadata {
         const S: usize = core::mem::size_of::<SlabMetadata>();
         // The metadatas are packed sequentially into entire pages.
@@ -55,10 +63,7 @@ impl Heap {
                 self.last_slab.wrapping_add(1)
             } else {
                 // If we have then we make a new page and put this metadata at its top
-                let dir: &mut PageDirectory = unsafe { PageDirectory::curr().as_mut().unwrap() };
-                dir.map_new_pages(
-                    1, self.space_start, self.space_end, PageFlags::USER | PageFlags::RW,
-                ) as *mut SlabMetadata
+                unsafe { self.pager.map(1) as *mut SlabMetadata }
             };
 
         unsafe {
@@ -83,10 +88,7 @@ impl Heap {
 
     fn create_slab(&mut self, block_size: u16) -> *mut SlabMetadata {
         // Make new page that our slab will live in
-        let dir: &mut PageDirectory = unsafe { PageDirectory::curr().as_mut().unwrap() };
-        let mut node = dir.map_new_pages(
-            1, self.space_start, self.space_end, PageFlags::USER | PageFlags::RW
-        ) as *mut SlabNode;
+        let mut node = unsafe { self.pager.map(1) } as *mut SlabNode;
         let metadata: *mut SlabMetadata = self.create_metadata(block_size, node);
 
         // Make free slots (all of them since we just created the slab) point at the next free slot
@@ -96,6 +98,7 @@ impl Heap {
                 node = (*node).next;
             }
         }
+
         unsafe {
             (*node).next = core::ptr::null_mut();
         } // No next free for the last one!
@@ -103,9 +106,7 @@ impl Heap {
         metadata
     }
 
-    pub(crate) unsafe fn alloc_internal(&mut self, layout: Layout) -> *mut u8 {
-        let _guard = KernelInterruptGuard::new();
-
+    pub unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
         match get_slab_size(layout.size()) {
             Some(size) => {
                 // Find non-exhausted slab with appropriate size, or create one
@@ -126,23 +127,16 @@ impl Heap {
             None => {
                 // This is a large allocation, the slab allocator won't help us.
                 // Just give them a few pages
-                let dir: &mut PageDirectory = PageDirectory::curr().as_mut().unwrap();
-                dir.map_new_pages(
-                    layout.size().div_ceil(PAGE_SIZE), self.space_start, self.space_end,
-                    PageFlags::USER | PageFlags::RW,
-                ) as *mut u8
+                self.pager.map(layout.size().div_ceil(PAGE_SIZE)) as *mut u8
             }
         }
     }
 
-    pub(crate) unsafe fn dealloc_internal(&mut self, ptr: *mut u8, layout: Layout) {
-        let _guard = KernelInterruptGuard::new();
-
+    pub unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
         if layout.size() > *SLAB_SIZES.last().unwrap() as usize {
             // This wasn't a slab allocation (too big), we just need to unmap its pages
-            let dir: &mut PageDirectory = PageDirectory::curr().as_mut().unwrap();
             for i in 0..layout.size().div_ceil(PAGE_SIZE) {
-                dir.unmap(ptr as usize / PAGE_SIZE + i, true);
+                self.pager.unmap(ptr as usize / PAGE_SIZE + i);
             }
         } else {
             // Go through each slab and see if our pointer is in it
@@ -165,33 +159,48 @@ impl Heap {
     }
 }
 
-unsafe impl GlobalAlloc for GlobalHeap {
+struct KernelPager {
+    start: usize,
+    end: usize
+}
+
+impl KernelPager {
+    // In page table space
+    fn new(start: usize, size: usize) -> KernelPager { KernelPager {
+        start,
+        end: start + size
+    }}
+}
+
+impl Pager for KernelPager {
+    unsafe fn map(&mut self, n: usize) -> usize {
+        paging::get_kernel_directory_mut().map_new_pages(n, self.start, self.end, PageFlags::RW)
+    }
+
+    unsafe fn unmap(&mut self, page: usize) {
+        paging::get_kernel_directory_mut().unmap(page, true)
+    }
+}
+
+struct KernelHeap(Once<Mutex<Heap<KernelPager>>>);
+unsafe impl Sync for KernelHeap {} // Interrupts must always be disabled before modifying the heap
+unsafe impl GlobalAlloc for KernelHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let mut out = core::ptr::null_mut();
-        crate::syscall::Alloc::call(&mut out, layout);
-        out
+        let _guard = KernelInterruptGuard::new();
+        self.0.get().unwrap().lock().alloc(layout)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        crate::syscall::Dealloc::call(ptr, layout);
+        let _guard = KernelInterruptGuard::new();
+        self.0.get().unwrap().lock().dealloc(ptr, layout)
     }
 }
 
-pub(crate) struct GlobalHeap(pub Mutex<Heap>);
-unsafe impl Sync for GlobalHeap {} // Interrupts must always be disabled before modifying the heap
-
 #[global_allocator]
-pub(crate) static HEAP: GlobalHeap = GlobalHeap(Mutex::new(Heap {
-    space_start: 0, space_end: 0,
-    first_slab: core::ptr::null_mut(), last_slab: core::ptr::null_mut() 
-}));
+static KERNEL_HEAP: KernelHeap = KernelHeap(Once::new());
 
-pub(crate) unsafe fn init(space_start: usize, size: usize) {
-    let mut heap = HEAP.0.lock();
-    heap.space_start = space_start / PAGE_SIZE / PAGE_ENTRIES;
-    heap.space_end = (space_start + size).div_ceil(PAGE_SIZE).div_ceil(PAGE_ENTRIES);
-    HAS_INIT.store(true, Ordering::Relaxed);
+pub(crate) fn init_kernel(space_start: usize, size: usize) {
+    KERNEL_HEAP.0.call_once(|| Mutex::new(Heap::new(KernelPager::new(space_start, size))));
 }
 
-static HAS_INIT: AtomicBool = AtomicBool::new(false);
-pub(crate) fn has_init() -> bool { HAS_INIT.load(Ordering::Relaxed) }
+pub(crate) fn has_init_kernel() -> bool { KERNEL_HEAP.0.is_completed() }

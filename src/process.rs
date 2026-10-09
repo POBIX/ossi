@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use core::{arch::asm, sync::atomic::Ordering};
+use core::{arch::asm, sync::atomic::{Ordering, AtomicU32, AtomicBool}};
 use spin::Mutex;
 
 /// The context of the CPU at the time of process switching. These are the only registers we need
@@ -14,16 +14,15 @@ pub struct Context {
 
 #[derive(Clone, Copy)]
 pub struct Process {
+    pub id: u32,
     pub ctx: Context,
-    pub heap_start: usize,
-    pub heap_size: usize
 }
 
+static ID_INCREMENTER: AtomicU32 = AtomicU32::new(0);
 impl Process {
     pub fn new(ctx: Context) -> Self { Process {
-        ctx,
-        heap_start: crate::paging::HEAP_END.load(Ordering::Relaxed),
-        heap_size: 0
+        id: ID_INCREMENTER.fetch_add(1, Ordering::Relaxed),
+        ctx
     }}
 }
 
@@ -78,7 +77,7 @@ pub(crate) fn next_program(new_context: Context) {
     }
 }
 
-static mut HAS_LOADED_PROCESSES: bool = false;
+static HAS_LOADED_PROCESSES: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirectory) {
     // Since we lock PROCESSES, we can't switch programs while registering one.
@@ -95,7 +94,7 @@ pub(crate) fn register(esp: u32, eip: u32, dir: *mut crate::paging::PageDirector
         *curr_index = next_index(*curr_index , len);
     }
 
-    unsafe { HAS_LOADED_PROCESSES = true; }
+    HAS_LOADED_PROCESSES.store(true, Ordering::Relaxed);
 
     // If this is the first program being run, we need to manually call next_program,
     // or else it will free the context we just created and never enter the program.
@@ -131,6 +130,6 @@ fn kill_process() {
     next_program(curr);
 }
 
-pub fn has_loaded_processes() -> bool { unsafe { HAS_LOADED_PROCESSES } }
+pub fn has_loaded_processes() -> bool { HAS_LOADED_PROCESSES.load(Ordering::Relaxed) }
 
 pub fn get_curr_process() -> Process { PROCESSES.lock()[*CURR_INDEX.lock()] }

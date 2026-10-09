@@ -1,8 +1,10 @@
-use alloc::{boxed::Box};
+use alloc::boxed::Box;
 use bitfield::bitfield;
 use bitflags::bitflags;
 use core::{mem::{size_of, transmute}, arch::asm};
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+
+use crate::heap;
 
 pub const PAGE_SIZE: usize = 0x1000;
 pub const PAGE_ENTRIES: usize = 1024;
@@ -57,7 +59,13 @@ pub(crate) static HEAP_END: AtomicUsize = AtomicUsize::new(usize::MAX);
 // The kernel needs to be able to modify other processes' page tables
 // which is why we reserve the top part of virtual memory for page table allocation
 // (If we allocated a page table in unmapped memory, and tried to modify it, we'd get a page fault)
-const TABLES_SIZE: usize = 128; // 128 page tables = 512MB of memory
+const TABLES_SIZE: usize = 1;
+
+// The top part of virtual memory for each diretory is reserved as a dynamic kernel heap.
+// This is done because if the kernel allocates something, it has no way of informing processes
+// that it's done so. So we have to keep it hardcoded.
+const KERNEL_HEAP_SIZE: usize = 4; // 16MB
+const KERNEL_HEAP_START: usize = PAGE_ENTRIES - TABLES_SIZE - KERNEL_HEAP_SIZE - 1;
 
 // this exists because the actual allocation functions in heap.rs rely on paging.
 unsafe fn kmalloc(size: usize, align: bool) -> *mut u8 {
@@ -95,8 +103,14 @@ impl PageDirectory {
         unsafe {
             let dir: *mut Self = Box::into_raw(Box::new_zeroed().assume_init());
             (*dir).map_kernel(PageFlags::RW | PageFlags::USER);
-            //(*dir).map_self(PageFlags::RW | PageFlags::USER);
             (*dir).map_recursive(PageFlags::RW | PageFlags::USER);
+
+            // Point the kernel heap reserved addresses to the same pages as the actual kernel heap
+            let kernel_dir: &PageDirectory = &*KERNEL_DIR.load(Ordering::Relaxed);
+            for i in KERNEL_HEAP_START..KERNEL_HEAP_START+KERNEL_HEAP_SIZE {
+                (*dir).page_tables[i] = kernel_dir.page_tables[i];
+            }
+
             dir
         }
     }
@@ -124,17 +138,6 @@ impl PageDirectory {
         }
     }
 
-    fn map_self(&mut self, flags: PageFlags) {
-        unsafe {
-            // map PageDirectory
-            self.identity_map(
-                self as *const _ as usize,
-                size_of::<PageDirectory>(),
-                flags,
-            );
-        }
-    }
-
     /// Maps the page directory's last table entry to the directory itself,
     /// so that it can be modified from within itself.
     /// Weird trick that abuses the fact that directories and tables have the same bit structure
@@ -155,14 +158,12 @@ impl PageDirectory {
         }
     }
 
-    /// Gives this page directory its own heap at a hardcoded address (for retrival during alloc())
-    fn map_heap(&mut self) {}
-
     /// Maps every virtual address in addr..addr+size to every physical address in addr..addr+size
     /// (Note: you probably want addr and size to be aligned)
     pub unsafe fn identity_map(&mut self, addr: usize, size: usize, flags: PageFlags) {
         for i in (0..size).step_by(PAGE_SIZE) {
-            self.make_page(addr + i, addr + i, flags).unwrap_or_else(|_| panic!("{}", addr + i));
+            self.make_page(addr + i, addr + i, flags)
+                .unwrap_or_else(|_| panic!("Tried to double map 0x{:x}", addr + i));
         }
     }
 
@@ -229,7 +230,7 @@ impl PageDirectory {
     fn map_kernel_table(&mut self, addr: u32, flags: PageFlags) -> *mut PageTable {
         // So we map it to one of the reserved pages in between TABLES_START and the end of memory
         let page: usize =
-            self.get_free_pages(1, PAGE_ENTRIES - 1 -TABLES_SIZE, PAGE_ENTRIES - 1).unwrap();
+            self.get_free_pages(1, PAGE_ENTRIES - 1 - TABLES_SIZE, PAGE_ENTRIES - 1).unwrap();
         let (i, _, temp_table) = self.find_table(page);
         unsafe {
             (*temp_table).pages[i] = Page(addr | PageFlags::PRESENT.bits() | flags.bits());
@@ -252,7 +253,7 @@ impl PageDirectory {
     unsafe fn make_table(&mut self, usage: &mut FramesUsage, index: usize, flags: PageFlags,
                          auto_unmap: bool) -> *mut PageTable {
         // This function is called from within alloc::alloc. So we can't use that obviously
-        let new_phys: u32 = if crate::heap::has_init() {
+        let new_phys: u32 = if crate::heap::has_init_kernel() {
             // Thankfully a PageTable is precisely 4KB, so it fits perfectly inside of a frame. 
             let free_frame: usize = usage.get_free_frame().expect("Out of memory!");
             usage.set_frame_used(free_frame, true);
@@ -412,8 +413,8 @@ impl PageDirectory {
     pub fn unmap(&mut self, page: usize, free: bool) {
         let (i, _, table) = self.find_table(page);
         unsafe {
-            (*table).pages[i] = Page(0);
             if free { FRAMES_USAGE.lock().free_frame(&mut (*table).pages[i]); }
+            (*table).pages[i] = Page(0);
             Self::invalidate_tlb(page);
         }
     }
@@ -500,10 +501,15 @@ impl FramesUsage {
     }
 }
 
+pub(crate) unsafe fn get_kernel_directory() -> &'static PageDirectory { &*KERNEL_DIR.load(Ordering::Relaxed) }
+pub(crate) unsafe fn get_kernel_directory_mut() -> &'static mut PageDirectory { 
+    &mut *KERNEL_DIR.load(Ordering::Relaxed)
+}
+
 pub(crate) static FRAMES_USAGE: spin::Mutex<FramesUsage> = spin::Mutex::new(FramesUsage([0; 32768]));
 
-/// Initialises and enables paging. Returns the address at which the heap should begin
-pub fn init() -> usize {
+/// Initialises and enables paging, as well the kernel heap (heap.rs)
+pub fn init() {
     // Create a page directory for the kernel.
     // PageDirectory::new cannot be used, nor can Box, since there's no allocator yet
     let kernel_dir: &mut PageDirectory = unsafe {
@@ -512,6 +518,7 @@ pub fn init() -> usize {
         core::ptr::write_bytes(ptr, 0, size_of::<PageDirectory>());
         transmute(ptr)
     };
+    KERNEL_DIR.store(kernel_dir, Ordering::Relaxed);
 
     // The only instances of using kmalloc after this are when allocating a single PageTable.
     // Theoretically there can only be PAGE_ENTRIES of them, so
@@ -538,13 +545,12 @@ pub fn init() -> usize {
 
     kernel_dir.map_tables(PageFlags::RW);
 
-    KERNEL_DIR.store(kernel_dir, Ordering::Relaxed);
-
-    // We've used the beginning of the "proper" heap with kmalloc, we don't want to override it.
-    // Returning the first free address is the simplest solution.
-    // We return the first free block (multiple of PAGE_SIZE) and not the first address
-    // to avoid double mapping.
-    let x = HEAP_END.load(Ordering::Relaxed) + 1; // + 1 in case it's already aligned
-    HEAP_END.store(x + PAGE_SIZE - (x % PAGE_SIZE), Ordering::Relaxed); // actually align it
-    HEAP_END.load(Ordering::Relaxed)
+    // Allocate the pages for the dynamic kernel heap
+    let mut usage = FRAMES_USAGE.lock();
+    for i in 0..KERNEL_HEAP_SIZE {
+        unsafe {
+            kernel_dir.make_table(&mut usage, KERNEL_HEAP_START+i, PageFlags::RW, true);
+        }
+    }
+    heap::init_kernel(KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
 }

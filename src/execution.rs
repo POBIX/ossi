@@ -115,10 +115,6 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
     PageDirectory::switch_to_kernel();
     // Create a new page directory for this executable
     let dir = PageDirectory::new();
-    (*dir).identity_map(
-        header as *const _ as usize, core::mem::size_of::<ElfHeader>(),
-        PageFlags::RW | PageFlags::USER
-    );
     // We switch to the new directory for the copy in the loop, then back to the old one
     (*dir).switch_to();
 
@@ -131,7 +127,7 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
         for i in (0..entry.mem_size as usize).step_by(paging::PAGE_SIZE) {
             (*dir).make_page(
                 entry.virt_addr as usize + i,  // virtual address (where program expects it)
-                MEM_START + i,                  // physical address (where we allocated it)
+                MEM_START + i,                 // physical address (where we allocated it)
                 PageFlags::RW | PageFlags::USER
             ).unwrap();
         }
