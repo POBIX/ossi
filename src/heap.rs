@@ -11,7 +11,8 @@
 //! slots: a used slot contains arbitrary data; a free slot is a SlabNode.
 //! The metadata of the slabs is stored in a linked list as well.
 
-use crate::paging::{PAGE_SIZE, self, PageFlags};
+use core::alloc::Layout;
+use crate::paging::PAGE_SIZE;
 
 
 pub trait Pager {
@@ -154,56 +155,3 @@ impl<P: Pager> Heap<P> {
     }
 }
 
-#[cfg(feature = "kernel")]
-pub(crate) mod kernel {
-    use crate::heap::*;
-    use alloc::alloc::{GlobalAlloc, Layout};
-    use spin::{Mutex, Once};
-    use crate::interrupts::KernelInterruptGuard;
-
-    struct KernelPager {
-        start: usize,
-        end: usize
-    }
-
-    impl KernelPager {
-        // In page table space
-        fn new(start: usize, size: usize) -> KernelPager { KernelPager {
-            start,
-            end: start + size
-        }}
-    }
-
-    impl Pager for KernelPager {
-        unsafe fn map(&mut self, n: usize) -> usize {
-            paging::get_kernel_directory_mut().map_new_pages(n, self.start, self.end, PageFlags::RW)
-        }
-
-        unsafe fn unmap(&mut self, page: usize) {
-            paging::get_kernel_directory_mut().unmap(page, true)
-        }
-    }
-
-    struct KernelHeap(Once<Mutex<Heap<KernelPager>>>);
-    unsafe impl Sync for KernelHeap {} // Interrupts must always be disabled before modifying the heap
-    unsafe impl GlobalAlloc for KernelHeap {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            let _guard = KernelInterruptGuard::new();
-            self.0.get().unwrap().lock().alloc(layout)
-        }
-
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            let _guard = KernelInterruptGuard::new();
-            self.0.get().unwrap().lock().dealloc(ptr, layout)
-        }
-    }
-
-    #[global_allocator]
-    static HEAP: KernelHeap = KernelHeap(Once::new());
-
-    pub(crate) fn init(space_start: usize, size: usize) {
-        HEAP.0.call_once(|| Mutex::new(Heap::new(KernelPager::new(space_start, size))));
-    }
-
-    pub(crate) fn has_init() -> bool { HEAP.0.is_completed() }
-}

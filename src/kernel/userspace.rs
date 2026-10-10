@@ -1,5 +1,5 @@
 use core::{mem::size_of, arch::asm};
-use crate::{DATA_SEG, KERNEL_STACK_TOP};
+use crate::kernel::{DATA_SEG, KERNEL_STACK_TOP};
 
 #[repr(C, packed)]
 struct GdtPtr {

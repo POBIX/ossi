@@ -2,7 +2,7 @@ use core::arch::asm;
 use alloc::{vec::Vec, string::String};
 use spin::{Mutex, Lazy};
 
-use crate::{interrupts, events::Event};
+use crate::events::Event;
 // No variadic generics :(
 pub trait SyscallBase {}
 
@@ -47,6 +47,7 @@ macro_rules! decl_syscall {
             }
 
             // unsafe in case $func is unsafe.
+            #[cfg(feature = "kernel")]
             #[allow(unused_unsafe)]
             fn call_internal(&self) { unsafe { $func($(self.$arg_name),*); } }
         }
@@ -69,6 +70,7 @@ macro_rules! decl_syscall {
             }
 
             // unsafe in case $func is unsafe.
+            #[cfg(feature = "kernel")]
             #[allow(unused_unsafe)]
             fn call_internal(&mut self) { unsafe { $func($(self.$arg_name),*); } }
         }
@@ -156,6 +158,7 @@ macro_rules! decl_syscalls {
             $( $name, )*
         }
 
+        #[cfg(feature = "kernel")]
         #[no_mangle]
         extern "C" fn syscall_handler_inner(syscall: u32, ty: Syscall) {
             match ty {
@@ -172,6 +175,7 @@ macro_rules! decl_syscalls {
             $( $name, )*
         }
 
+        #[cfg(feature = "kernel")]
         #[no_mangle]
         extern "C" fn syscall_handler_inner_lifetime<'a>(syscall: u32, ty: SyscallLifetime) {
             match ty {
@@ -181,109 +185,39 @@ macro_rules! decl_syscalls {
     };
 }
 
-pub fn init() {
-    unsafe {
-        interrupts::IDT[0x80] = interrupts::Handler::new_raw(
-            syscall_handler as *const () as u32, interrupts::GateType::DInterrupt, 3
-        );
-        interrupts::IDT[0x81] = interrupts::Handler::new_raw(
-            syscall_handler_lifetime as *const () as u32, interrupts::GateType::DInterrupt, 3
-        );
-    }
-}
-
-extern "x86-interrupt" fn syscall_handler() {
-    unsafe {
-        asm!(
-            "cli",
-            "push ebx",
-            "push eax",
-            "call syscall_handler_inner",
-            "add esp, 8", // pop the parameters
-            "sti"
-        )
-    }
-}
-
-extern "x86-interrupt" fn syscall_handler_lifetime() {
-    unsafe {
-        asm!(
-            "cli",
-            "push ebx",
-            "push eax",
-            "call syscall_handler_inner_lifetime",
-            "add esp, 8", // pop the parameters
-            "sti"
-        )
-    }
-}
-
 /* Definition of all specific syscalls */
 
 decl_syscalls!(
-    Print<'a> = print_syscall{args: core::fmt::Arguments<'a>},
-    AreInterruptsEnabled<'a> = are_interrupts_enabled{value: &'a mut bool},
-    RunProgram<'a> = crate::execution::run_program{program: &'a [u8]},
-    HasLoadedProcesses<'a> = has_loaded_processes{out: &'a mut bool},
-    GetCurrPageDir<'a> = get_curr_page_dir{out: &'a mut *mut crate::paging::PageDirectory},
-    GetOnKeyDown<'a> = get_on_key_down{out: &'a mut &'static Mutex<Event<crate::keyboard::KeyArgs>>},
-    GetOnKeyUp<'a> = get_on_key_up{out: &'a mut &'static Mutex<Event<crate::keyboard::KeyArgs>>},
-    GetConsole<'a> = get_console{out: &'a mut &'static Lazy<Mutex<crate::vga_console::Console>>},
-    IsKeyPressed<'a> = is_key_pressed{out: &'a mut bool, key: crate::keyboard::Key},
-    IsCapsLockActive<'a> = is_caps_lock_active{out: &'a mut bool},
-    FsGetHeader<'a> = fs_get_header{out: &'a mut &'static Lazy<Mutex<&'static mut crate::fs::Header>>},
-    GetFilesInDir<'a> = crate::fs::dir{root: &'a String, folders: &'a mut Vec<String>, files: &'a mut Vec<crate::fs::FileMetadata>},
-    ExecuteFile<'a> = crate::execution::execute_file{file: &'a mut crate::fs::File}
+    Print<'a> = crate::kernel::syscall::print_syscall{args: core::fmt::Arguments<'a>},
+    AreInterruptsEnabled<'a> = crate::kernel::syscall::are_interrupts_enabled{value: &'a mut bool},
+    RunProgram<'a> = crate::kernel::execution::run_program{program: &'a [u8]},
+    HasLoadedProcesses<'a> = crate::kernel::syscall::has_loaded_processes{out: &'a mut bool},
+    GetCurrPageDir<'a> = crate::kernel::syscall::get_curr_page_dir{out: &'a mut *mut crate::paging::PageDirectory},
+    GetOnKeyDown<'a> = crate::kernel::syscall::get_on_key_down{out: &'a mut &'static Mutex<Event<crate::keyboard::KeyArgs>>},
+    GetOnKeyUp<'a> = crate::kernel::syscall::get_on_key_up{out: &'a mut &'static Mutex<Event<crate::keyboard::KeyArgs>>},
+    GetConsole<'a> = crate::kernel::syscall::get_console{out: &'a mut &'static Lazy<Mutex<crate::vga_console::Console>>},
+    IsKeyPressed<'a> = crate::kernel::syscall::is_key_pressed{out: &'a mut bool, key: crate::keyboard::Key},
+    IsCapsLockActive<'a> = crate::kernel::syscall::is_caps_lock_active{out: &'a mut bool},
+    FsGetHeader<'a> = crate::kernel::syscall::fs_get_header{out: &'a mut &'static Lazy<Mutex<&'static mut crate::fs::Header>>},
+    GetFilesInDir<'a> = crate::kernel::fs::dir{root: &'a String, folders: &'a mut Vec<String>, files: &'a mut Vec<crate::fs::FileMetadata>},
+    ExecuteFile<'a> = crate::kernel::execution::execute_file{file: &'a mut crate::fs::File}
 );
 decl_syscalls!(
-    DisableInterrupts = crate::interrupts::disable{},
-    EnableInterrupts = crate::interrupts::enable{},
-    Halt = halt{},
-    Empty = empty{},
-    Outb = crate::io::outb{port: u16, value: u8},
-    Outw = crate::io::outw{port: u16, value: u16},
-    Outl = crate::io::outl{port: u16, value: u32},
-    ReadSectors = crate::ata::read_sectors{lba: u32, buffer: *mut u8, sector_count: usize},
-    WriteSectors = crate::ata::write_sectors{lba: u32, data: *const u8, sector_count: usize},
-    SetIsr = set_isr{index: usize, func: extern "x86-interrupt" fn(), dpl: u8},
-    PicSendEoi = crate::pic::send_eoi{irq_line: u8},
-    PicSetMask = crate::pic::set_mask{irq_line: u8, value: bool},
-    UnreigsterProcess = crate::process::unregister_prev{},
-    IoWait = crate::io::wait{}
+    DisableInterrupts = crate::kernel::interrupts::disable{},
+    EnableInterrupts = crate::kernel::interrupts::enable{},
+    Halt = crate::kernel::syscall::halt{},
+    Empty = crate::kernel::syscall::empty{},
+    Outb = crate::kernel::io::outb{port: u16, value: u8},
+    Outw = crate::kernel::io::outw{port: u16, value: u16},
+    Outl = crate::kernel::io::outl{port: u16, value: u32},
+    ReadSectors = crate::kernel::ata::read_sectors{lba: u32, buffer: *mut u8, sector_count: usize},
+    WriteSectors = crate::kernel::ata::write_sectors{lba: u32, data: *const u8, sector_count: usize},
+    SetIsr = crate::kernel::syscall::set_isr{index: usize, func: extern "x86-interrupt" fn(), dpl: u8},
+    PicSendEoi = crate::kernel::pic::send_eoi{irq_line: u8},
+    PicSetMask = crate::kernel::pic::set_mask{irq_line: u8, value: bool},
+    UnreigsterProcess = crate::kernel::process::unregister_prev{},
+    IoWait = crate::kernel::io::wait{}
 );
-
-fn print_syscall(args: core::fmt::Arguments) {
-    crate::vga_console::_print(args);
-}
-
-fn is_key_pressed(out: &mut bool, key: crate::keyboard::Key) {
-    *out = crate::keyboard::is_key_pressed(key);
-}
-
-fn empty() {}
-
-fn halt() { unsafe { asm!("hlt"); } }
-
-unsafe fn set_isr(index: usize, func: extern "x86-interrupt" fn(), dpl: u8) {
-    crate::interrupts::IDT[index] = crate::interrupts::Handler::new(func, interrupts::GateType::DInterrupt, dpl);
-}
-
-macro_rules! generate_ret_func {
-    ($name: ident, $expr: expr, $type: ty) => {
-        fn $name(out: &mut $type) {
-            *out = $expr;
-        }
-    };
-}
-
-generate_ret_func!(has_loaded_processes, crate::process::has_loaded_processes(), bool);
-generate_ret_func!(get_curr_page_dir, crate::paging::PageDirectory::curr(), *mut crate::paging::PageDirectory);
-generate_ret_func!(are_interrupts_enabled, crate::interrupts::is_enabled(), bool);
-generate_ret_func!(get_on_key_down, &crate::keyboard::ON_KEY_DOWN, &'static Mutex<Event<crate::keyboard::KeyArgs>>);
-generate_ret_func!(get_on_key_up, &crate::keyboard::ON_KEY_UP, &'static Mutex<Event<crate::keyboard::KeyArgs>>);
-generate_ret_func!(get_console, &crate::vga_console::CONSOLE, &'static Lazy<Mutex<crate::vga_console::Console>>);
-generate_ret_func!(is_caps_lock_active, crate::keyboard::is_caps_lock_active(), bool);
-generate_ret_func!(fs_get_header, &crate::fs::HEADER, &'static Lazy<Mutex<&'static mut crate::fs::Header>>);
 
 #[allow(invalid_value)] // out's initial value is discarded. Giving it an actual value would be a massive waste of performance.
 pub fn get_fs_header() -> &'static Lazy<Mutex<&'static mut crate::fs::Header>>{
@@ -291,3 +225,4 @@ pub fn get_fs_header() -> &'static Lazy<Mutex<&'static mut crate::fs::Header>>{
     FsGetHeader::call(&mut out);
     out
 }
+

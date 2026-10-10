@@ -1,4 +1,4 @@
-use crate::{io, pic};
+use crate::kernel::{io, pic};
 
 // these ports assume we want to use the master ATA.
 /// data register
@@ -33,11 +33,12 @@ pub const STATUS_DRQ: u8 = 0x08;
 pub const STATUS_ERR: u8 = 0x01;
 
 pub fn init() {
-    use crate::interrupts::{self, GateType};
+    use crate::interrupts::GateType;
+    use crate::kernel::interrupts;
     unsafe {
-        interrupts::IDT[pic::IRQ_OFFSET + 14] =
+        interrupts::IDT[crate::pic::IRQ_OFFSET + 14] =
             interrupts::Handler::new(irq14, GateType::DInterrupt, 0);
-        interrupts::IDT[pic::IRQ_OFFSET + 15] =
+        interrupts::IDT[crate::pic::IRQ_OFFSET + 15] =
             interrupts::Handler::new(irq15, GateType::DInterrupt, 0);
     }
     //TODO: query maximum HD size. don't allow going over the sector limit

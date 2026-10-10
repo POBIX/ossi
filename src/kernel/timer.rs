@@ -1,5 +1,5 @@
 use crate::interrupts::GateType;
-use crate::{interrupts, pic};
+use crate::kernel::{interrupts, pic};
 use spin::Mutex;
 use crate::events::{Event, EventHandler};
 use core::arch::asm;
@@ -8,7 +8,7 @@ use crate::paging::PageDirectory;
 pub fn init() {
     unsafe {
         // attach on_tick to IRQ0
-        interrupts::IDT[pic::IRQ_OFFSET + 0] =
+        interrupts::IDT[crate::pic::IRQ_OFFSET + 0] =
             interrupts::Handler::new_raw(on_tick as u32, GateType::DInterrupt, 0);
     }
 }
@@ -38,14 +38,14 @@ extern "x86-interrupt" fn on_tick() {
 #[allow(named_asm_labels)]
 #[no_mangle]
 fn on_tick_internal() {
-    crate::interrupts::disable();
+    crate::kernel::interrupts::disable();
     unsafe { TIMER += 1; }
     ON_TICK.lock().invoke(());
 
     // If we don't have any processes, don't run the task scheduler code
-    if !crate::process::has_loaded_processes() {
+    if !crate::kernel::process::has_loaded_processes() {
         pic::send_eoi(0);
-        crate::interrupts::enable();
+        crate::kernel::interrupts::enable();
         return;
     }
 
@@ -62,7 +62,7 @@ fn on_tick_internal() {
         );
     }
 
-    crate::process::next_program(context); // jumps out of this function
+    crate::kernel::process::next_program(context); // jumps out of this function
 
     unsafe {
         asm!(
@@ -71,7 +71,7 @@ fn on_tick_internal() {
         );
         pic::set_mask(0, false);
         pic::send_eoi(0);
-        crate::interrupts::enable();
+        crate::kernel::interrupts::enable();
     }
 }
 

@@ -28,7 +28,7 @@ unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32,
 
     // Then we pretend that start_of_program_execution is the middle of an already running program,
     // meaning the task scheduler will call it and set esp to the new stack.
-    crate::process::register(
+    crate::kernel::process::register(
         new_esp - 12, // new_esp-8 to account for the pushed values
         start_of_program_execution as unsafe fn(fn()) as u32,
         new_dir
@@ -36,8 +36,8 @@ unsafe fn enter_loaded_program(entry_point: u32, new_esp: u32,
 }
 
 unsafe fn start_of_program_execution(entry_point: fn()) {
-    crate::pic::send_eoi(0);
-    crate::userspace::enter();
+    crate::kernel::pic::send_eoi(0);
+    crate::kernel::userspace::enter();
 
     entry_point(); // Jumps out of here until the end of program execution
 
