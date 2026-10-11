@@ -41,7 +41,7 @@ pub(crate) extern "C" fn kernel_main(info: &grub::MultibootInfo, magic: u32) -> 
     keyboard::init();
     ata::init();
 
-    execution::execute_file(&mut crate::fs::File::open("/shell").unwrap());
+    execution::execute_file(&mut crate::syscall::OpenFile::call("/shell".as_ptr(), 6).unwrap());
 
     loop {}
 }

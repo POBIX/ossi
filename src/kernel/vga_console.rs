@@ -1,8 +1,21 @@
 use crate::io;
 use crate::io::{Clear, Seek, Write};
+use crate::kernel::interrupts::KernelInterruptGuard;
 use core::fmt;
 use spin::{Lazy, Mutex};
 use crate::vga_console::*;
+use volatile::Volatile;
+
+#[repr(transparent)]
+pub(crate) struct Buffer {
+    pub(crate) buffer: [Volatile<Char>; VGA_BUFFER_SIZE],
+}
+
+pub struct Console {
+    pub(crate) ptr: usize,
+    pub(crate) buffer: &'static mut Buffer,
+    pub(crate) color: ColorCode,
+}
 
 //TODO: refactor this mess
 impl Buffer {
@@ -163,17 +176,11 @@ pub(crate) static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| {
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
-    let ints_enabled = crate::kernel::interrupts::is_enabled();
-    if ints_enabled {
-        // interrupts might mean another print, which would cause a deadlock.
-        crate::kernel::interrupts::disable();
-    }
+    let _guard = KernelInterruptGuard::new();
     let result = {
         let mut console = CONSOLE.lock();
         console.write_fmt(args)
     };
-    result.unwrap();
-    if ints_enabled {
-        crate::kernel::interrupts::enable();
-    }
+    result.unwrap()
 }
+

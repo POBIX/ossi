@@ -1,6 +1,6 @@
 use core::mem::size_of;
 
-use crate::{syscall, io};
+use crate::{io, syscall};
 
 /// The number of sectors the Header struct should take up.
 pub const HEADER_SECTORS: usize = 2;
@@ -32,17 +32,10 @@ pub struct FileMetadata {
     pub flags: FileFlags,
 }
 
-/// The struct that sits at the top of the hard drive, containing the FileMetadata maps.
-#[repr(packed)]
-pub struct Header {
-    first_null: usize, // the index (in entries, the next field) of the first null FileMetadata.
-    pub(crate) entries: [FileMetadata; MAX_FILES],
-    _padding: [u8; 1024 - 988], // align to 512 bytes
-}
-
 pub struct File {
-    index: usize,
-    ptr: usize
+    pub(crate) fd: usize,
+    pub(crate) ptr: usize,
+    pub md: FileMetadata
 }
 
 #[derive(Debug)]
@@ -57,130 +50,12 @@ pub enum FileError {
 }
 
 impl File {
-    fn from_index(index: usize) -> File { File { index, ptr: 0 } }
-
-    pub fn open(path: &str) -> Result<File, FileError> {
-        let mut header = syscall::get_fs_header().lock();
-
-        // search for a file with the same path as the parameter
-        for i in 0..header.entries.len() {
-            let file = &mut header.entries[i];
-            if file.flags.contains(FileFlags::DELETED) { continue; }
-            // convert the path (a null terminated [u8]) to a rust string
-            let file_path = unsafe {
-                core::str::from_utf8_unchecked(
-                    core::ffi::CStr::from_ptr(file.path.as_ptr() as *const _).to_bytes(),
-                )
-            };
-            if file_path == path {
-                // found it!
-                if file.flags.contains(FileFlags::OPENED) {
-                    return Err(FileError::FileAlreadyOpen);
-                }
-                file.flags.set(FileFlags::OPENED, true);
-                return Ok(File::from_index(i));
-            }
-        }
-        Err(FileError::FileNotFound)
-    }
-
-    pub fn create(path: &str) -> Result<File, FileError> {
-        let mut header = syscall::get_fs_header().lock();
-
-        if path.len() >= MAX_PATH_LENGTH {
-            return Err(FileError::PathTooLong);
-        }
-        if header.first_null >= header.entries.len() {
-            return Err(FileError::TooManyFiles);
-        }
-
-        // Make sure that path doesn't already exist
-        for i in 0..header.entries.len() {
-            let file = &mut header.entries[i];
-            if file.flags.contains(FileFlags::DELETED) { continue; }
-            // convert the path (a null terminated [u8]) to a rust string
-            let file_path = unsafe {
-                core::str::from_utf8_unchecked(
-                    core::ffi::CStr::from_ptr(file.path.as_ptr() as *const _).to_bytes(),
-                )
-            };
-            if file_path == path {
-                return Err(FileError::FileAlreadyExists);
-            }
-        }
-
-        // header.first_null is the index of the file we're going to create.
-        // in order to figure out which sector we should write to,
-        // we simply add one sector to the previous file's sector.
-        // TODO: this assumes files are never deleted.
-        let addr: usize = if header.first_null > 0 {
-            let prev = header.entries[header.first_null-1];
-            prev.sector + prev.size
-        } else {
-            // or, if this is the first file, use the first available sector.
-            HEADER_SECTORS + 1
-        };
-
-        // pad the path with nulls to the right
-        let mut padded_path: [u8; MAX_PATH_LENGTH] = [0; MAX_PATH_LENGTH];
-        let len = path.len();
-        padded_path[..len].copy_from_slice(path.as_bytes());
-
-        // update the metadata in memory
-        let first_null = header.first_null;
-        header.entries[first_null] = FileMetadata {
-            path: padded_path,
-            sector: addr,
-            size: 1,
-            flags: FileFlags::empty()
-        };
-        header.first_null += 1;
-
-        // update it on disk
-        update_header(&header);
-
-        Ok(File::from_index(first_null))
-    }
-
-    pub fn delete(&mut self) -> Result<(), FileError>{
-        let mut header = syscall::get_fs_header().lock();
-        let metadata = &mut header.entries[self.index];
-
-        if !metadata.flags.contains(FileFlags::OPENED) {
-            return Err(FileError::FileClosed);
-        }
-        metadata.flags.set(FileFlags::DELETED, true);
-        update_header(&header);
-        Ok(())
-    }
-
-    #[inline]
-    pub fn get_metadata(&self) -> FileMetadata {
-        syscall::get_fs_header().lock().entries[self.index]
-    }
-
-    pub fn set_size(&mut self, val: usize) {
-        let mut header = syscall::get_fs_header().lock();
-        header.entries[self.index].size = val;
-        update_header(&header);
-    }
-
-    pub fn close(&mut self) {
-        // close the file
-        let mut header = syscall::get_fs_header().lock();
-        if self.index >= header.entries.len() {
-            // File already closed
-            return;
-        }
-        header.entries[self.index].flags.set(FileFlags::OPENED, false);
-        self.index = MAX_FILES+1; // mark this reference as invalid
-        update_header(&header);
-    }
+    pub fn get_fd(&self) -> usize { self.fd }
 }
 
 impl Drop for File {
     fn drop(&mut self) {
-        self.close();
+        syscall::CloseFile::call(self.fd);
     }
 }
 
@@ -198,15 +73,13 @@ impl io::Read for File {
     fn read_byte(&self) -> u8 {
         let sector_offset = self.ptr / 512; // the sector our byte is in
         let mut buffer = [0u8; 512]; // we have to read the whole sector, even for just one byte
-        let md = self.get_metadata();
-        syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
+        syscall::ReadSectors::call((self.md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
 
         buffer[self.ptr % 512]
     }
 
     fn read_bytes(&self, buffer: &mut [u8]) -> usize {
-        let md = self.get_metadata();
-        let count = usize::min(md.size * 512, buffer.len());
+        let count = usize::min(self.md.size * 512, buffer.len());
 
         let sector_a = self.ptr / 512; // the sector offset of the first byte
         let sector_b = (self.ptr + count) / 512; // the sector offset of the last byte
@@ -215,7 +88,7 @@ impl io::Read for File {
         if self.ptr % 512 != 0 || count % 512 != 0 {
             sector_count += 1;
         }
-        syscall::ReadSectors::call((md.sector+sector_a) as u32, buffer.as_mut_ptr(), sector_count);
+        syscall::ReadSectors::call((self.md.sector+sector_a) as u32, buffer.as_mut_ptr(), sector_count);
         count
     }
 }
@@ -225,14 +98,13 @@ impl io::Write for File {
         let sector_offset = self.ptr / 512; // the sector our byte is in
         let mut buffer = [0u8; 512]; // we have to write over the whole sector, even for just 1 byte
         // in order to not overwrite anything else, read this sector first
-        let md = self.get_metadata();
-        syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
+        syscall::ReadSectors::call((self.md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
 
         // set the byte
         buffer[self.ptr % 512] = byte;
 
         // update the sector on disk
-        syscall::WriteSectors::call((md.sector + sector_offset) as u32, buffer.as_ptr(), 1);
+        syscall::WriteSectors::call((self.md.sector + sector_offset) as u32, buffer.as_ptr(), 1);
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) {
@@ -246,18 +118,9 @@ impl io::Write for File {
         if self.ptr % 512 != 0 {
             //TODO
         }
-        let md = self.get_metadata();
 
         // update the sectors on disk
-        syscall::WriteSectors::call((md.sector + sector_a) as u32, bytes.as_ptr(), sector_count);
-    }
-}
-
-/// writes header to disk.
-#[inline]
-fn update_header(header: &Header) {
-    unsafe {
-        syscall::WriteSectors::call(0, core::mem::transmute(header), HEADER_SECTORS);
+        syscall::WriteSectors::call((self.md.sector + sector_a) as u32, bytes.as_ptr(), sector_count);
     }
 }
 

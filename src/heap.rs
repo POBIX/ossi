@@ -174,7 +174,7 @@ mod public_heap {
     use alloc::alloc::{GlobalAlloc, Layout};
     use spin::Mutex;
     use crate::syscall;
-    use core::mem::MaybeUninit;
+    use crate::interrupts::InterruptGuard;
 
     struct PublicPager {
         start: usize,
@@ -191,13 +191,11 @@ mod public_heap {
 
     impl Pager for PublicPager {
         unsafe fn map(&mut self, n: usize) -> usize {
-            let mut out = MaybeUninit::<usize>::uninit();
-            syscall::MapPages::call(n, self.start, self.end, PageFlags::RW | PageFlags::USER, out.as_mut_ptr());
-            out.assume_init()
+            syscall::MapPages::call(n, self.start, self.end, PageFlags::RW | PageFlags::USER)
         }
 
         unsafe fn unmap(&mut self, page: usize) {
-            syscall::UnmapPages::call(page);
+            syscall::UnmapPage::call(page);
         }
     }
 
@@ -205,16 +203,14 @@ mod public_heap {
     unsafe impl Sync for PublicHeap {} // Interrupts must always be disabled before modifying the heap
     unsafe impl GlobalAlloc for PublicHeap {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            syscall::DisableInterrupts::call();
+            let _guard = InterruptGuard::new();
             let out: *mut u8 = self.0.lock().alloc(layout);
-            syscall::EnableInterrupts::call();
             out
         }
 
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            syscall::DisableInterrupts::call();
-            self.0.lock().dealloc(ptr, layout);
-            syscall::EnableInterrupts::call();
+            let _guard = InterruptGuard::new();
+            self.0.lock().dealloc(ptr, layout)
         }
     }
 

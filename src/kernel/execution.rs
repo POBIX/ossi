@@ -2,7 +2,7 @@ use core::{arch::asm, alloc::Layout};
 
 use alloc::alloc::dealloc;
 
-use crate::{paging::{self, PageFlags, PageDirectory}, io::Read};
+use crate::{paging::{self, PageFlags, PageDirectory}, io::Read, kernel};
 
 /// Runs the compiled code in program, starting at main_offset,
 /// and returns the error code returned by the program in EAX.
@@ -45,9 +45,9 @@ unsafe fn start_of_program_execution(entry_point: fn()) {
     // the list of active processes and then wait for the task scheduler
     // to run the next program. Since this process won't be a candidate anymore
     // it won't be executed ever again and it will effectively quit.
-    crate::syscall::PicSetMask::call(0, false);
-    crate::syscall::PicSendEoi::call(0);
-    crate::syscall::UnreigsterProcess::call();
+    kernel::pic::set_mask(0, false);
+    kernel::pic::send_eoi(0);
+    kernel::process::unregister_prev();
     loop {}
 }
 
@@ -171,18 +171,18 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
 }
 
 pub fn execute_file(file: &mut crate::fs::File) {
+    let size = file.md.size * 512;
+    let layout = unsafe { Layout::from_size_align_unchecked(size, 4096) };
     let buffer = {
         let buffer = unsafe {
-            let size = file.get_metadata().size * 512;
-            let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(size, 4096));
+            let ptr = alloc::alloc::alloc(layout);
             core::slice::from_raw_parts_mut(ptr, size)
         };
         file.read_bytes(buffer);
-        file.close();
         buffer
     };
     unsafe {
         run_program(buffer);
-        dealloc(buffer.as_mut_ptr(), Layout::from_size_align_unchecked(2, 2));
+        dealloc(buffer.as_mut_ptr(), layout);
     }
 }

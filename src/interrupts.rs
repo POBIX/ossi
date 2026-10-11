@@ -14,8 +14,7 @@ pub struct InterruptGuard {
 
 impl InterruptGuard {
     pub fn new() -> Self {
-        let mut enabled = false;
-        crate::syscall::AreInterruptsEnabled::call(&mut enabled);
+        let enabled: bool = crate::syscall::AreInterruptsEnabled::call();
         if enabled {
             crate::syscall::DisableInterrupts::call();
         }
