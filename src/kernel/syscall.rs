@@ -1,3 +1,4 @@
+use crate::paging::{PageFlags, PageDirectory};
 use crate::syscall::*;
 use core::arch::asm;
 use spin::{Mutex, Lazy};
@@ -56,6 +57,14 @@ pub(crate) fn halt() { unsafe { asm!("hlt"); } }
 
 pub(crate) unsafe fn set_isr(index: usize, func: extern "x86-interrupt" fn(), dpl: u8) {
     interrupts::IDT[index] = interrupts::Handler::new(func, GateType::DInterrupt, dpl);
+}
+
+pub(crate) unsafe fn map_pages(n: usize, from: usize, to: usize, flags: PageFlags, out: *mut usize) {
+    *out = (*PageDirectory::curr()).map_new_pages(n, from, to, flags);
+}
+
+pub(crate) unsafe fn unmap_pages(page: usize) {
+    (*PageDirectory::curr()).unmap(page, true)
 }
 
 macro_rules! generate_ret_func {

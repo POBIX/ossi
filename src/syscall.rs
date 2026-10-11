@@ -30,6 +30,14 @@ pub trait Syscall4: SyscallBase {
     type T4;
 }
 
+pub trait Syscall5: SyscallBase {
+    type T1;
+    type T2;
+    type T3;
+    type T4;
+    type T5;
+}
+
 #[macro_export]
 macro_rules! decl_syscall {
     (_internal $name: ident = $func: path [$($arg_name:ident : $arg_type:ty),*]) => {
@@ -110,6 +118,17 @@ macro_rules! decl_syscall {
             type T2 = $arg2t;
             type T3 = $arg3t;
             type T4 = $arg4t;
+        }
+    };
+
+    ($name: ident = $func: path {$arg1n: ident: $arg1t: ty, $arg2n: ident: $arg2t: ty, $arg3n: ident: $arg3t: ty, $arg4n: ident: $arg4t: ty, $arg5n: ident: $arg5t: ty}) => {
+        decl_syscall!(_internal $name = $func[$arg1n: $arg1t, $arg2n: $arg2t, $arg3n: $arg3t, $arg4n: $arg4t, $arg5n: $arg5t]);
+        impl Syscall5 for $name {
+            type T1 = $arg1t;
+            type T2 = $arg2t;
+            type T3 = $arg3t;
+            type T4 = $arg4t;
+            type T5 = $arg5t;
         }
     };
 
@@ -216,7 +235,9 @@ decl_syscalls!(
     PicSendEoi = crate::kernel::pic::send_eoi{irq_line: u8},
     PicSetMask = crate::kernel::pic::set_mask{irq_line: u8, value: bool},
     UnreigsterProcess = crate::kernel::process::unregister_prev{},
-    IoWait = crate::kernel::io::wait{}
+    IoWait = crate::kernel::io::wait{},
+    MapPages = crate::kernel::syscall::map_pages{n: usize, from: usize, to: usize, flags: crate::paging::PageFlags, out: *mut usize},
+    UnmapPages = crate::kernel::syscall::unmap_pages{ptr: usize}
 );
 
 #[allow(invalid_value)] // out's initial value is discarded. Giving it an actual value would be a massive waste of performance.

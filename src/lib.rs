@@ -11,7 +11,6 @@
 
 extern crate alloc;
 
-
 use core::panic::PanicInfo;
 
 pub mod interrupts;

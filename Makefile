@@ -37,8 +37,8 @@ clean:
 	@rm -rf $(OBJ_DIR)
 
 
-$(LIB_FILE): $(wildcard src/*.rs)
-	@cargo build
+$(LIB_FILE): $(shell find src -name '*.rs')
+	@cargo build --features kernel
 $(BOOT_OBJ): $(LIB_FILE)
 	@nasm $(BOOT_FILE) $(NASM_ARGS) -o $(BOOT_OBJ)
 

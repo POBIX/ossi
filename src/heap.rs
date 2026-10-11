@@ -1,4 +1,3 @@
-//! TODO: Alignment
 //! Brief overview of how allocation works:
 //! The page directory keeps track of which pages are mapped and which are not.
 //! For a mapped page, there are two possibilites:
@@ -37,14 +36,15 @@ pub struct SlabMetadata {
     next: *mut SlabMetadata,
 }
 
-// The choice of numbers is pretty much completely arbitrary. I stole these numbers from Linux.
+// These numbers are specifically chosen such that rounding up to align is never needed.
+// They are stolen from Linux's slab allocator.
 const SLAB_SIZES: &[u16] = &[8, 16, 32, 64, 96, 128, 192, 256, 512, 1024, 2048];
 fn get_slab_size(req: usize) -> Option<u16> {
     SLAB_SIZES.iter().find(|&&n| usize::from(n) >= req).copied()
 }
 
 impl<P: Pager> Heap<P> {
-    pub fn new(pager: P) -> Heap<P> { Heap {
+    pub const fn new(pager: P) -> Heap<P> { Heap {
         pager,
         first_slab: core::ptr::null_mut(),
         last_slab: core::ptr::null_mut()
@@ -55,7 +55,7 @@ impl<P: Pager> Heap<P> {
         // The metadatas are packed sequentially into entire pages.
         // So, if we haven't exhausted the current page we can just go to the next address
         let new: *mut SlabMetadata =
-            if !self.first_slab.is_null() && self.last_slab as usize % PAGE_SIZE < PAGE_SIZE - S {
+            if !self.first_slab.is_null() && self.last_slab as usize % PAGE_SIZE <= PAGE_SIZE - S {
                 self.last_slab.wrapping_add(1)
             } else {
                 // If we have then we make a new page and put this metadata at its top
@@ -103,7 +103,8 @@ impl<P: Pager> Heap<P> {
     }
 
     pub unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
-        match get_slab_size(layout.size()) {
+        let padded: usize = layout.pad_to_align().size();
+        match get_slab_size(padded) {
             Some(size) => {
                 // Find non-exhausted slab with appropriate size, or create one
                 let mut slab: *mut SlabMetadata = self.first_slab;
@@ -118,20 +119,31 @@ impl<P: Pager> Heap<P> {
                 let out: *mut SlabNode = (*slab).free;
                 (*slab).free = (*out).next;
 
-                out as *mut u8
+                out as *mut u8 // We don't need to round to align: the slab addresses are already
+                               // aligned.
             }
             None => {
                 // This is a large allocation, the slab allocator won't help us.
                 // Just give them a few pages
-                self.pager.map(layout.size().div_ceil(PAGE_SIZE)) as *mut u8
+                if layout.align() <= PAGE_SIZE {
+                    self.pager.map(padded.div_ceil(PAGE_SIZE)) as *mut u8 // We don't need to align,
+                                                                          // it's already aligned to
+                                                                          // PAGE_SIZE.
+                } else {
+                    // If we're requested an alignment greater than a page, the pointer will be
+                    // pushed up to the next page and we won't be able to unmap the first one.
+                    // This is an uncommon and unreasonable layout, so we simply do not support it.
+                    core::ptr::null_mut()
+                }
             }
         }
     }
 
     pub unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        if layout.size() > *SLAB_SIZES.last().unwrap() as usize {
+        let padded: usize = layout.pad_to_align().size();
+        if padded > *SLAB_SIZES.last().unwrap() as usize {
             // This wasn't a slab allocation (too big), we just need to unmap its pages
-            for i in 0..layout.size().div_ceil(PAGE_SIZE) {
+            for i in 0..padded.div_ceil(PAGE_SIZE) {
                 self.pager.unmap(ptr as usize / PAGE_SIZE + i);
             }
         } else {
@@ -155,3 +167,57 @@ impl<P: Pager> Heap<P> {
     }
 }
 
+#[cfg(not(feature = "kernel"))]
+mod public_heap {
+    use crate::heap::*;
+    use crate::paging::PageFlags;
+    use alloc::alloc::{GlobalAlloc, Layout};
+    use spin::Mutex;
+    use crate::syscall;
+    use core::mem::MaybeUninit;
+
+    struct PublicPager {
+        start: usize,
+        end: usize
+    }
+
+    impl PublicPager {
+        // In page table space
+        const fn new(start: usize, size: usize) -> PublicPager { PublicPager {
+            start,
+            end: start + size
+        }}
+    }
+
+    impl Pager for PublicPager {
+        unsafe fn map(&mut self, n: usize) -> usize {
+            let mut out = MaybeUninit::<usize>::uninit();
+            syscall::MapPages::call(n, self.start, self.end, PageFlags::RW | PageFlags::USER, out.as_mut_ptr());
+            out.assume_init()
+        }
+
+        unsafe fn unmap(&mut self, page: usize) {
+            syscall::UnmapPages::call(page);
+        }
+    }
+
+    struct PublicHeap(Mutex<Heap<PublicPager>>);
+    unsafe impl Sync for PublicHeap {} // Interrupts must always be disabled before modifying the heap
+    unsafe impl GlobalAlloc for PublicHeap {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            syscall::DisableInterrupts::call();
+            let out: *mut u8 = self.0.lock().alloc(layout);
+            syscall::EnableInterrupts::call();
+            out
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            syscall::DisableInterrupts::call();
+            self.0.lock().dealloc(ptr, layout);
+            syscall::EnableInterrupts::call();
+        }
+    }
+
+    #[global_allocator]
+    static HEAP: PublicHeap = PublicHeap(Mutex::new(Heap::new(PublicPager::new(1, 1018))));
+}
