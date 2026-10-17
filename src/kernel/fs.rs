@@ -33,8 +33,10 @@ fn update_header(header: &Header) {
 }
 
 impl File {
-    fn new(fd: usize, md: &FileMetadata) -> File { File { fd, ptr: 0, md: *md } }
+    fn new(fd: usize) -> File { File { fd, ptr: 0 } }
 }
+
+pub(crate) fn get_metadata(fd: usize) -> FileMetadata { HEADER.lock().entries[fd] }
 
 pub(crate) fn open_file(path_raw: *const u8, len: usize) -> Result<File, FileError> {
     let mut header = HEADER.lock();
@@ -58,7 +60,7 @@ pub(crate) fn open_file(path_raw: *const u8, len: usize) -> Result<File, FileErr
                 return Err(FileError::FileAlreadyOpen);
             }
             file.flags.set(FileFlags::OPENED, true);
-            return Ok(File::new(i, file));
+            return Ok(File::new(i));
         }
     }
     Err(FileError::FileNotFound)
@@ -123,7 +125,7 @@ pub(crate) fn create_file(path_raw: *const u8, len: usize) -> Result<File, FileE
     // update it on disk
     update_header(&header);
 
-    Ok(File::new(first_null, &header.entries[first_null]))
+    Ok(File::new(first_null))
 }
 
 pub(crate) fn delete_file(fd: usize) -> Result<(), FileError> {

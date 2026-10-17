@@ -1,10 +1,11 @@
 use core::arch::asm;
 
-use crate::io::Write;
+use crate::io::{Write, Read, Seek, Clear};
 use crate::kernel::interrupts;
 use crate::interrupts::GateType;
-use crate::paging::{PageFlags, PageDirectory};
+use crate::paging::{self, PageFlags, PageDirectory};
 use crate::kernel::vga_console::CONSOLE;
+use crate::vga_console::ColorCode;
 
 pub fn init() {
     unsafe {
@@ -37,10 +38,40 @@ pub(crate) fn halt() { unsafe { asm!("hlt"); } }
 
 pub(crate) fn empty() {}
 
-pub(crate) unsafe fn map_pages(n: usize, start: usize, end: usize, flags: PageFlags) -> usize {
-    (*PageDirectory::curr()).map_new_pages(n, start, end, flags)
+pub(crate) unsafe fn map_pages(n: usize, flags: PageFlags) -> usize {
+    (*PageDirectory::curr()).map_new_pages(n, paging::USER_MEM_FROM, paging::USER_MEM_TO, flags)
 }
 
 pub(crate) unsafe fn unmap_page(page: usize) {
     (*PageDirectory::curr()).unmap(page, true);
+}
+
+macro_rules! console_syscalls {
+    ( $( $method:ident { $($arg:ident : $ty:ty),* } $(-> $ret:ty)?),* ) => {
+        $(
+            pub(crate) fn $method($($arg: $ty),*) $(-> $ret)? {
+                CONSOLE.lock().$method($($arg),*)
+            }
+        )*
+    };
+}
+
+console_syscalls!(
+    write_byte{byte: u8},
+    read_byte{} -> u8,
+    seek{pos: usize},
+    get_cursor_position{} -> usize,
+    seek_raw{pos: usize},
+    update_cursor{},
+    newline{},
+    newline_raw{},
+    backspace{},
+    clear{},
+    set_color{color: ColorCode},
+    get_color{} -> ColorCode
+);
+
+pub(crate) unsafe fn write_string(ptr: *const u8, len: usize) {
+    let str = core::str::from_utf8(core::slice::from_raw_parts(ptr, len)).unwrap();
+    CONSOLE.lock().write_string(str)
 }

@@ -14,17 +14,6 @@ static PLACEMENT_ADDR: AtomicUsize = AtomicUsize::new(HEAP_START);
 /// The end of the paging heap. Calculated after init()
 pub(crate) static HEAP_END: AtomicUsize = AtomicUsize::new(usize::MAX);
 
-// The kernel needs to be able to modify other processes' page tables
-// which is why we reserve the top part of virtual memory for page table allocation
-// (If we allocated a page table in unmapped memory, and tried to modify it, we'd get a page fault)
-const TABLES_SIZE: usize = 1;
-
-// The top part of virtual memory for each diretory is reserved as a dynamic kernel heap.
-// This is done because if the kernel allocates something, it has no way of informing processes
-// that it's done so. So we have to keep it hardcoded.
-const KERNEL_HEAP_SIZE: usize = 4; // 16MB
-const KERNEL_HEAP_START: usize = PAGE_ENTRIES - TABLES_SIZE - KERNEL_HEAP_SIZE - 1;
-
 // this exists because the actual allocation functions in heap.rs rely on paging.
 unsafe fn kmalloc(size: usize, align: bool) -> *mut u8 {
     if PLACEMENT_ADDR.load(Ordering::Relaxed) > HEAP_END.load(Ordering::Relaxed) {
@@ -346,11 +335,17 @@ impl PageDirectory {
     {
         let start: usize = self.get_free_pages(pages, from, to).expect("Out of virtual memory!");
         for i in 0..pages {
-            let frame: usize = FRAMES_USAGE.lock().get_free_frame().expect("Out of memory!") * PAGE_SIZE;
+            let phys: usize = {
+                let mut usage = FRAMES_USAGE.lock();
+                let f = usage.get_free_frame().expect("Out of memory!");
+                unsafe { usage.set_frame_used(f, true); }
+                f * PAGE_SIZE
+            };
+            
             unsafe {
                 self.make_page(
                     start + i * PAGE_SIZE,
-                    frame,
+                    phys,
                     flags,
                 ).unwrap();
             }
@@ -402,7 +397,7 @@ impl FramesUsage {
         (frame_idx / 32, frame_idx % 32) // 32: size of each element in the array
     }
 
-    unsafe fn set_frame_used(&mut self, frame_idx: usize, value: bool) {
+    pub unsafe fn set_frame_used(&mut self, frame_idx: usize, value: bool) {
         let (idx, off) = Self::get_idx_off(frame_idx);
         if value {
             self.0[idx] |= 0x1 << off;
@@ -412,6 +407,7 @@ impl FramesUsage {
     }
 
     /// Returns the index of the first unused frame, or None if none is available
+    /// You probably mean to call usage.set_frame_used() on its result
     pub fn get_free_frame(&self) -> Option<usize> {
         // note: this is performance critical code. .into_iter().enumerate() is about 3 times slower
         // We only start checking at HEAP_END since everything before is guaranteed to be in use

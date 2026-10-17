@@ -1,6 +1,7 @@
 use crate::paging::PageFlags;
 use core::mem::MaybeUninit;
 use crate::fs::{File, FileError};
+use crate::vga_console::ColorCode;
 use core::arch::asm; macro_rules! decl_syscall {
     (_internal $name: ident = $func: path {$($arg_name:ident : $arg_type:ty),*} -> $ret_type:ty) => {
         #[allow(dead_code)]
@@ -64,10 +65,24 @@ decl_syscalls!(
     ReadSectors = crate::kernel::ata::read_sectors{lba: u32, buffer: *mut u8, sector_count: usize},
     WriteSectors = crate::kernel::ata::write_sectors{lba: u32, data: *const u8, sector_count: usize},
     PicSetMask = crate::kernel::pic::set_mask{irq_line: u8, value: bool},
-    MapPages = crate::kernel::syscall::map_pages{n: usize, start: usize, end: usize, flags: PageFlags} -> usize,
+    MapPages = crate::kernel::syscall::map_pages{n: usize, flags: PageFlags} -> usize,
     UnmapPage = crate::kernel::syscall::unmap_page{page: usize},
     OpenFile = crate::kernel::fs::open_file{path: *const u8, len: usize} -> Result<File, FileError>,
     CreateFile = crate::kernel::fs::create_file{path: *const u8, len: usize} -> Result<File, FileError>,
     DeleteFile = crate::kernel::fs::delete_file{fd: usize} -> Result<(), FileError>,
-    CloseFile = crate::kernel::fs::close_file{fd: usize}
+    CloseFile = crate::kernel::fs::close_file{fd: usize},
+    GetFileMetadata = crate::kernel::fs::get_metadata{fd: usize} -> crate::fs::FileMetadata,
+    ConsoleWriteByte = crate::kernel::syscall::write_byte{byte: u8},
+    ConsoleWriteString = crate::kernel::syscall::write_string{ptr: *const u8, len: usize},
+    ConsoleReadByte = crate::kernel::syscall::read_byte{} -> u8,
+    ConsoleSeek = crate::kernel::syscall::seek{pos: usize},
+    ConsoleGetCursorPosition = crate::kernel::syscall::get_cursor_position{} -> usize,
+    ConsoleSeekRaw = crate::kernel::syscall::seek_raw{pos: usize},
+    ConsoleUpdateCursor = crate::kernel::syscall::update_cursor{},
+    ConsoleNewline = crate::kernel::syscall::newline{},
+    ConsoleNewlineRaw = crate::kernel::syscall::newline_raw{},
+    ConsoleBackspace = crate::kernel::syscall::backspace{},
+    ConsoleClear = crate::kernel::syscall::clear{},
+    ConsoleSetColor = crate::kernel::syscall::set_color{color: ColorCode},
+    ConsoleGetColor = crate::kernel::syscall::get_color{} -> ColorCode
 );

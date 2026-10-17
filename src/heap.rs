@@ -170,28 +170,17 @@ impl<P: Pager> Heap<P> {
 #[cfg(not(feature = "kernel"))]
 mod public_heap {
     use crate::heap::*;
-    use crate::paging::PageFlags;
+    use crate::paging::{self, PageFlags};
     use alloc::alloc::{GlobalAlloc, Layout};
     use spin::Mutex;
     use crate::syscall;
     use crate::interrupts::InterruptGuard;
 
-    struct PublicPager {
-        start: usize,
-        end: usize
-    }
-
-    impl PublicPager {
-        // In page table space
-        const fn new(start: usize, size: usize) -> PublicPager { PublicPager {
-            start,
-            end: start + size
-        }}
-    }
+    struct PublicPager;
 
     impl Pager for PublicPager {
         unsafe fn map(&mut self, n: usize) -> usize {
-            syscall::MapPages::call(n, self.start, self.end, PageFlags::RW | PageFlags::USER)
+            syscall::MapPages::call(n, PageFlags::RW | PageFlags::USER)
         }
 
         unsafe fn unmap(&mut self, page: usize) {
@@ -215,5 +204,5 @@ mod public_heap {
     }
 
     #[global_allocator]
-    static HEAP: PublicHeap = PublicHeap(Mutex::new(Heap::new(PublicPager::new(1, 1018))));
+    static HEAP: PublicHeap = PublicHeap(Mutex::new(Heap::new(PublicPager {})));
 }

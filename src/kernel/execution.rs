@@ -2,7 +2,7 @@ use core::{arch::asm, alloc::Layout};
 
 use alloc::alloc::dealloc;
 
-use crate::{paging::{self, PageFlags, PageDirectory}, io::Read, kernel};
+use crate::{paging::{PageFlags, PageDirectory, PAGE_SIZE, self}, io::Read, kernel::{self, paging::FRAMES_USAGE}};
 
 /// Runs the compiled code in program, starting at main_offset,
 /// and returns the error code returned by the program in EAX.
@@ -81,10 +81,6 @@ struct ElfProgramHeader {
     align: u32,
 }
 
-// Just a random address sometime after the end of the heap and before the kernel (computed by hand)
-// TODO: work on an actual heap that isn't hardcoded so this won't be a thing.
-static mut MEM_START: usize = 0x4_400_000;
-
 /// Runs the ELF program whose raw bytes are contained in program
 /// The kernel page directory must be active *before* running this function,
 /// and program must live on the kernel heap
@@ -124,15 +120,15 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
             continue;
         }
 
-        for i in (0..entry.mem_size as usize).step_by(paging::PAGE_SIZE) {
-            (*dir).make_page(
-                entry.virt_addr as usize + i,  // virtual address (where program expects it)
-                MEM_START + i,                 // physical address (where we allocated it)
-                PageFlags::RW | PageFlags::USER
-            ).unwrap();
+        for i in (0..entry.mem_size as usize).step_by(PAGE_SIZE) {
+            let phys: usize = {
+                let mut usage = FRAMES_USAGE.lock();
+                let f = usage.get_free_frame().expect("Out of memory!");
+                unsafe { usage.set_frame_used(f, true); }
+                f * PAGE_SIZE
+            };
+            (*dir).make_page(entry.virt_addr as usize + i, phys, PageFlags::RW | PageFlags::USER).unwrap();
         }
-
-        MEM_START += (entry.mem_size as usize / 0x1000 + 1) * 0x1000;
 
         // Copy the program into memory
         core::ptr::copy::<u8>(
@@ -152,26 +148,24 @@ pub(crate) unsafe fn run_program(program: &[u8]) {
     }
 
     // Map the program's new stack
-    const STACK_SIZE: usize = 16384;
-    (*dir).identity_map(
-        MEM_START,
-        STACK_SIZE,
-        PageFlags::USER | PageFlags::RW,
+    const STACK_SIZE: usize = 16384; // Should be a multiple of 4K
+    let stack_bot = (*dir).map_new_pages(
+        STACK_SIZE.div_ceil(PAGE_SIZE),
+        paging::USER_MEM_FROM, paging::USER_MEM_TO, PageFlags::RW | PageFlags::USER
     );
-    let stack_top = MEM_START + STACK_SIZE;
-    for i in (MEM_START..stack_top).step_by(4) {
-        let ptr = i as *mut u32;
+
+    for i in (0..STACK_SIZE).step_by(4) {
+        let ptr = (stack_bot + i) as *mut u32;
         unsafe { *ptr = 0xDEADBEEF };
     }
 
-    MEM_START += STACK_SIZE;
-
-    let aligned_stack_top = (stack_top - 4) & !0xF;
+    let aligned_stack_top = (stack_bot + STACK_SIZE - 4) & !0xF;
     enter_loaded_program(header.entry, aligned_stack_top as u32, dir, prev_dir);
 }
 
 pub fn execute_file(file: &mut crate::fs::File) {
-    let size = file.md.size * 512;
+    let md = kernel::fs::get_metadata(file.fd);
+    let size = md.size * 512;
     let layout = unsafe { Layout::from_size_align_unchecked(size, 4096) };
     let buffer = {
         let buffer = unsafe {

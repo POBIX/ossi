@@ -1,6 +1,5 @@
 use crate::io;
 use crate::io::{Clear, Seek, Write};
-use crate::kernel::interrupts::KernelInterruptGuard;
 use core::fmt;
 use spin::{Lazy, Mutex};
 use crate::vga_console::*;
@@ -172,15 +171,4 @@ pub(crate) static CONSOLE: Lazy<Mutex<Console>> = Lazy::new(|| {
         buffer: unsafe { &mut *(0xB8000 as *mut Buffer) }, // address of VGA text buffer
     })
 });
-
-#[doc(hidden)]
-pub fn _print(args: fmt::Arguments) {
-    use core::fmt::Write;
-    let _guard = KernelInterruptGuard::new();
-    let result = {
-        let mut console = CONSOLE.lock();
-        console.write_fmt(args)
-    };
-    result.unwrap()
-}
 

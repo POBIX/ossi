@@ -34,8 +34,7 @@ pub struct FileMetadata {
 
 pub struct File {
     pub(crate) fd: usize,
-    pub(crate) ptr: usize,
-    pub md: FileMetadata
+    pub(crate) ptr: usize
 }
 
 #[derive(Debug)]
@@ -73,13 +72,15 @@ impl io::Read for File {
     fn read_byte(&self) -> u8 {
         let sector_offset = self.ptr / 512; // the sector our byte is in
         let mut buffer = [0u8; 512]; // we have to read the whole sector, even for just one byte
-        syscall::ReadSectors::call((self.md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
+        let md: FileMetadata = syscall::GetFileMetadata::call(self.fd);
+        syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
 
         buffer[self.ptr % 512]
     }
 
     fn read_bytes(&self, buffer: &mut [u8]) -> usize {
-        let count = usize::min(self.md.size * 512, buffer.len());
+        let md: FileMetadata = syscall::GetFileMetadata::call(self.fd);
+        let count = usize::min(md.size * 512, buffer.len());
 
         let sector_a = self.ptr / 512; // the sector offset of the first byte
         let sector_b = (self.ptr + count) / 512; // the sector offset of the last byte
@@ -88,23 +89,24 @@ impl io::Read for File {
         if self.ptr % 512 != 0 || count % 512 != 0 {
             sector_count += 1;
         }
-        syscall::ReadSectors::call((self.md.sector+sector_a) as u32, buffer.as_mut_ptr(), sector_count);
+        syscall::ReadSectors::call((md.sector+sector_a) as u32, buffer.as_mut_ptr(), sector_count);
         count
     }
 }
 
 impl io::Write for File {
     fn write_byte(&mut self, byte: u8) {
+        let md: FileMetadata = syscall::GetFileMetadata::call(self.fd);
         let sector_offset = self.ptr / 512; // the sector our byte is in
         let mut buffer = [0u8; 512]; // we have to write over the whole sector, even for just 1 byte
         // in order to not overwrite anything else, read this sector first
-        syscall::ReadSectors::call((self.md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
+        syscall::ReadSectors::call((md.sector + sector_offset) as u32, buffer.as_mut_ptr(), 1);
 
         // set the byte
         buffer[self.ptr % 512] = byte;
 
         // update the sector on disk
-        syscall::WriteSectors::call((self.md.sector + sector_offset) as u32, buffer.as_ptr(), 1);
+        syscall::WriteSectors::call((md.sector + sector_offset) as u32, buffer.as_ptr(), 1);
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) {
@@ -120,7 +122,8 @@ impl io::Write for File {
         }
 
         // update the sectors on disk
-        syscall::WriteSectors::call((self.md.sector + sector_a) as u32, bytes.as_ptr(), sector_count);
+        let md: FileMetadata = syscall::GetFileMetadata::call(self.fd);
+        syscall::WriteSectors::call((md.sector + sector_a) as u32, bytes.as_ptr(), sector_count);
     }
 }
 
